@@ -7,14 +7,16 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
+from dataset import *
+
 from seqeval.metrics import classification_report
 import logging
 
 logger = logging.getLogger(__name__)
 
-def evaluate(args, model, tokenizer, prefix, label_maps):
-    token_map = label_maps[0]  # token classification
-    emotion_map = label_maps[1]  # emotion classification
+def evaluate(args, model, tokenizer, prefix, label_map):
+    token_map = label_map  # token classification
+    # emotion_map = label_map[1]  # emotion classification
 
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
@@ -48,7 +50,7 @@ def evaluate(args, model, tokenizer, prefix, label_maps):
 
             with torch.no_grad():
                 input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-                outputs = model(input_ids, segment_ids, input_mask,valid_ids=valid_ids,attention_mask_label=l_mask)
+                outputs = model(args.device, input_ids, segment_ids, input_mask,valid_ids=valid_ids,attention_mask_label=l_mask)
                 logits = outputs #[:2]
 
             logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)

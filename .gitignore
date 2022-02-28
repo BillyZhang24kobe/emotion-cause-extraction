@@ -3,3 +3,9 @@
 __pycache__/*
 */__pycache__/*
 */*/__pycache__/*
+*.pyc
+*kingcrab*
+./data/*cached*
+*checkpoints*
+./model/eca-model/**
+./model/logs/**

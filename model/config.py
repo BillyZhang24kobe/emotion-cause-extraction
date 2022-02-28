@@ -21,6 +21,6 @@ BERT_MODEL = 'bert-base-uncased'
 
 # hyperparameters
 BATCH_SIZE = 32
-NUM_EPOCHS = 3
+NUM_EPOCHS = 10
 SAVE_STEPS = 750
 MAX_LENGTH = 512

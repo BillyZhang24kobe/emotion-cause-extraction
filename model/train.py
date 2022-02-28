@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -52,8 +53,8 @@ def train(args, train_dataset, model, tokenizer):
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    # if args.n_gpu > 1:
+    #     model = torch.nn.DataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
@@ -90,8 +91,8 @@ def train(args, train_dataset, model, tokenizer):
             outputs = model(args.device, input_ids, segment_ids, input_mask, label_ids, valid_ids, l_mask)
             loss = outputs
 
-            if args.n_gpu > 1:
-                loss = loss.mean() # mean() to average on multi-gpu parallel training
+            # if args.n_gpu > 1:
+            #     loss = loss.mean() # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             

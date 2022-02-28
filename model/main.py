@@ -69,8 +69,8 @@ def main():
                         help="Save checkpoint every X updates steps.")
     parser.add_argument("--eval_all_checkpoints", action='store_true',
                         help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number")
-    parser.add_argument("--no_cuda", action='store_true',
-                        help="Avoid using CUDA when available")
+    # parser.add_argument("--no_cuda", action='store_true',
+    #                     help="Avoid using CUDA when available")
     parser.add_argument('--overwrite_output_dir', action='store_true',
                         help="Overwrite the content of the output directory")
     parser.add_argument('--overwrite_cache', action='store_true',
@@ -97,7 +97,7 @@ def main():
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         args.n_gpu = torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
@@ -177,6 +177,25 @@ def main():
                 result = evaluate(args, model, tokenizer, prefix=global_step, label_map=label_map)
                 #result = dict((k + '_{}'.format(global_step), v) for k, v in result.items())
                 # results.update(result)
+    
+    # Evaluation
+    results = {}
+    if args.do_eval:
+        tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        checkpoints = [args.output_dir]
+        if args.eval_all_checkpoints:
+            checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
+            logging.getLogger("pytorch_transformers.modeling_utils").setLevel(logging.WARN)  # Reduce logging
+        logger.info("Evaluate the following checkpoints: %s", checkpoints)
+        for checkpoint in checkpoints:
+            global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
+            model = model_class.from_pretrained(checkpoint)
+            model = BertECTagging.from_pretrained(checkpoint, num_labels=num_labels)
+            model.to(args.device)
+            label_map = {i : label for i, label in enumerate(label_list,1)}
+            result = evaluate(args, model, tokenizer, prefix=global_step, label_map=label_map)
+            #result = dict((k + '_{}'.format(global_step), v) for k, v in result.items())
+            # results.update(result)
 
     return results
 
