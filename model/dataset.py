@@ -69,6 +69,10 @@ class DataProcessor(object):
     def get_dev_examples(self, data_dir):
         """Gets a collection of `InputExample`s for the dev set."""
         raise NotImplementedError()
+    
+    def get_test_examples(self, data_dir):
+        """Gets a collection of `InputExample`s for the dev set."""
+        raise NotImplementedError()
 
     def get_labels(self):
         """Gets the list of labels for this data set."""
@@ -86,8 +90,13 @@ class ECAProcessor(DataProcessor):
         """See base class."""
         return self._create_examples(
             self._read_tsv(os.path.join(data_dir, "eca-train-cleaned.tsv")), "train")
-    
+
     def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "eca-dev-cleaned.tsv")), "dev")
+    
+    def get_test_examples(self, data_dir):
         """See base class."""
         return self._create_examples(
             self._read_tsv(os.path.join(data_dir, "eca-test-cleaned.tsv")), "test")
@@ -198,18 +207,17 @@ def convert_examples_to_features(examples, label_tuple, max_seq_length, tokenize
     return features
 
 
-def load_and_cache_examples(args, task, tokenizer, evaluate=False):
+def load_and_cache_examples(args, tokenizer, file_type='train'):
     # if args.local_rank not in [-1, 0] and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     processor = ECAProcessor()
     # output_mode = output_modes[task]
     # Load data features from cache or dataset file
-    cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}_{}'.format(
-        'dev' if evaluate else 'train',
+    cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
+        file_type,
         list(filter(None, args.model_name_or_path.split('/'))).pop(),
-        str(args.max_seq_length),
-        str(task)))
+        str(args.max_seq_length)))
     if os.path.exists(cached_features_file):
         logger.info("Loading features from cached file %s", cached_features_file)
         features = torch.load(cached_features_file)
@@ -218,8 +226,14 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
         label_tuple = processor.get_labels()
         # if task in ['mnli', 'mnli-mm'] and args.model_type in ['roberta']:
         #     # HACK(label indices are swapped in RoBERTa pretrained model)
-        #     label_list[1], label_list[2] = label_list[2], label_list[1] 
-        examples = processor.get_dev_examples(args.data_dir) if evaluate else processor.get_train_examples(args.data_dir)
+        #     label_list[1], label_list[2] = label_list[2], label_list[1]
+        if file_type == 'train':
+            examples = processor.get_train_examples(args.data_dir)
+        elif file_type == 'dev':
+            examples = processor.get_dev_examples(args.data_dir)
+        else:
+            examples = processor.get_test_examples(args.data_dir)
+        # examples = processor.get_dev_examples(args.data_dir) if evaluate else processor.get_train_examples(args.data_dir)
         
         # Changed
         features = convert_examples_to_features(examples, label_tuple, args.max_seq_length, tokenizer)
@@ -228,8 +242,8 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
 
-    if args.local_rank == 0 and not evaluate:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
+    # if args.local_rank == 0 and not evaluate:
+    #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)

@@ -13,7 +13,7 @@ MODEL_CLASSES = {
 # DEVICE = torch.device("cuda" if is_cuda else "cpu")
 
 # data
-OUTPUT_DIR = 'eca-model'
+OUTPUT_DIR = './trained_model/ect_bert/checkpoint_val_f1_0.3965'
 SEED = 1
 
 # model

@@ -7,5 +7,7 @@ __pycache__/*
 *kingcrab*
 ./data/*cached*
 *checkpoints*
-./model/eca-model/**
+./model/trained_model/**
 ./model/logs/**
+*.ipynb
+*cached*
