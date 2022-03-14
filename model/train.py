@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -11,17 +12,18 @@ from tqdm import tqdm, trange
 
 import config
 from utils import *
+from predict import evaluate
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-def train(args, train_dataset, model, tokenizer):
+def train(args, train_dataset, model, tokenizer, label_map):
     """
     Train the model
     """
     tb_writer = SummaryWriter()
-    args.save_steps = config.SAVE_STEPS
+    # args.save_steps = config.SAVE_STEPS
     args.num_train_epochs = config.NUM_EPOCHS
     args.output_dir = config.OUTPUT_DIR
     # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
@@ -52,8 +54,8 @@ def train(args, train_dataset, model, tokenizer):
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    # if args.n_gpu > 1:
+    #     model = torch.nn.DataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
@@ -73,6 +75,7 @@ def train(args, train_dataset, model, tokenizer):
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
+    max_val_f1 = 0
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
@@ -90,8 +93,8 @@ def train(args, train_dataset, model, tokenizer):
             outputs = model(args.device, input_ids, segment_ids, input_mask, label_ids, valid_ids, l_mask)
             loss = outputs
 
-            if args.n_gpu > 1:
-                loss = loss.mean() # mean() to average on multi-gpu parallel training
+            # if args.n_gpu > 1:
+            #     loss = loss.mean() # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             
@@ -110,25 +113,13 @@ def train(args, train_dataset, model, tokenizer):
                 model.zero_grad()
                 global_step += 1
 
-                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                # tb_writer.add_scalar('eval_{}'.format('f1'), val_f1, global_step)
+                tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+                tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
+                logging_loss = tr_loss
+                # if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Log metrics
-                    if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                        results = evaluate(args, model, tokenizer)
-                        for key, value in results.items():
-                            tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
-                    tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-                    tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
-                    logging_loss = tr_loss
-
-                if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                    # Save model checkpoint
-                    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
-                    if not os.path.exists(output_dir):
-                        os.makedirs(output_dir)
-                    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-                    model_to_save.save_pretrained(output_dir)
-                    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
-                    logger.info("Saving model checkpoint to %s", output_dir)
+                    # if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
             
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -137,7 +128,37 @@ def train(args, train_dataset, model, tokenizer):
             train_iterator.close()
             break
 
+        val_acc, val_precision, val_recall, val_f1 = evaluate(args, model, tokenizer, 'dev', label_map)  # 
+        logger.info('> '+ args.evaluation_metrics + 'val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
+
+        if val_f1 > max_val_f1:
+            max_val_f1 = val_f1
+            # Save model checkpoint
+            path_dir = os.path.join(args.output_dir, 'checkpoint_val_f1_{}'.format(round(val_f1, 4))+args.evaluation_metrics)
+            if not os.path.exists(path_dir):
+                os.makedirs(path_dir)
+            model.save_pretrained(path_dir)
+            tokenizer.save_pretrained(path_dir)
+            torch.save(args, os.path.join(path_dir, 'training_args.bin'))
+            logger.info(">>Saving model checkpoint to %s", path_dir)
+            # if not os.path.exists(output_dir):
+            #     os.makedirs(output_dir)
+            # model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+            # model_to_save.save_pretrained(path)
+            
+
+                # if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+                #     # Save model checkpoint
+                #     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
+                #     if not os.path.exists(output_dir):
+                #         os.makedirs(output_dir)
+                #     model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+                #     model_to_save.save_pretrained(output_dir)
+                #     torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+                #     logger.info("Saving model checkpoint to %s", output_dir)
+            
+
     if args.local_rank in [-1, 0]:
         tb_writer.close()
     
-    return global_step, tr_loss / global_step
+    return global_step, tr_loss / global_step, path_dir

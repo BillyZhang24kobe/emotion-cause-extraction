@@ -3,6 +3,12 @@
 __pycache__/*
 */__pycache__/*
 */*/__pycache__/*
-*checkpoint*
-*/*.ipynb
-*ipynb
+*.pyc
+*kingcrab*
+*checkpoints*
+*/trained_model/*
+*/*/trained_model/*
+*/logs/*
+*/*/logs/*
+*.ipynb
+*cached*
