@@ -12,14 +12,15 @@ def main():
 
     ## Required parameters
     parser.add_argument("--data_dir", default=None, type=str, required=True,
-                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
+                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.") 
+    parser.add_argument("--evaluation_metrics", default=None, type=str, required=True, help="Whether to evaluate using token-level-cause metric.")
     # parser.add_argument("--model_type", default=None, type=str, required=True,
     #                     help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
     
     
     ## Other parameters
     parser.add_argument("--output_dir", default=None, type=str,
-                        help="The output directory where the model predictions and checkpoints will be written.")
+                        help="The output directory where the model predictions and checkpoints will be written.")   
     parser.add_argument("--task_name", default="eca", type=str,
                         help="The name of the task to train")
     parser.add_argument("--model_name_or_path", default=None, type=str,
@@ -91,6 +92,10 @@ def main():
 
     args.output_dir = OUTPUT_DIR
     args.model_name_or_path = BERT_MODEL
+    args.max_seq_length = MAX_SEQ_LENGTH
+    args.per_gpu_train_batch_size = config.BATCH_SIZE
+    args.per_gpu_eval_batch_size = config.BATCH_SIZE
+    args.learning_rate = config.LEARNING_RATE
 
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
@@ -100,7 +105,7 @@ def main():
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
         args.n_gpu = torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)

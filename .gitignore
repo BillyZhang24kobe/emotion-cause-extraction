@@ -5,9 +5,10 @@ __pycache__/*
 */*/__pycache__/*
 *.pyc
 *kingcrab*
-./data/*cached*
 *checkpoints*
-./model/trained_model/**
-./model/logs/**
+*/trained_model/*
+*/*/trained_model/*
+*/logs/*
+*/*/logs/*
 *.ipynb
 *cached*

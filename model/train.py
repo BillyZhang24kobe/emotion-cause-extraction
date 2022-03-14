@@ -23,7 +23,7 @@ def train(args, train_dataset, model, tokenizer, label_map):
     Train the model
     """
     tb_writer = SummaryWriter()
-    args.save_steps = config.SAVE_STEPS
+    # args.save_steps = config.SAVE_STEPS
     args.num_train_epochs = config.NUM_EPOCHS
     args.output_dir = config.OUTPUT_DIR
     # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
@@ -128,14 +128,13 @@ def train(args, train_dataset, model, tokenizer, label_map):
             train_iterator.close()
             break
 
-        val_acc, val_precision, val_recall, val_f1 = evaluate(args, model, tokenizer, 'dev', label_map)  # TODO: update evalutaion matrics
-                # for key, value in results.items():
-        logger.info('> val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
+        val_acc, val_precision, val_recall, val_f1 = evaluate(args, model, tokenizer, 'dev', label_map)  # 
+        logger.info('> '+ args.evaluation_metrics + 'val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
 
         if val_f1 > max_val_f1:
             max_val_f1 = val_f1
             # Save model checkpoint
-            path_dir = os.path.join(args.output_dir, 'checkpoint_val_f1_{}'.format(round(val_f1, 4)))
+            path_dir = os.path.join(args.output_dir, 'checkpoint_val_f1_{}'.format(round(val_f1, 4))+args.evaluation_metrics)
             if not os.path.exists(path_dir):
                 os.makedirs(path_dir)
             model.save_pretrained(path_dir)

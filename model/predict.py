@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 
+import numpy as np
+
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
@@ -13,6 +15,8 @@ from seqeval.metrics import classification_report, precision_score, recall_score
 import logging
 
 logger = logging.getLogger(__name__)
+
+# TODO: evaluator class (TokenLevel, OverLap)
 
 def evaluate(args, model, tokenizer, file_type, label_map):
     token_map = label_map  # token classification
@@ -56,21 +60,113 @@ def evaluate(args, model, tokenizer, file_type, label_map):
         logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)
         logits = logits.detach().cpu().numpy()
         label_ids = label_ids.to('cpu').numpy()
-        # input_mask = input_mask.to('cpu').numpy()
+        input_m = input_mask.to('cpu').numpy()
 
-        for i, label in enumerate(label_ids):
-            temp_1 = []
-            temp_2 = []
-            for j,m in enumerate(label):
-                if j == 0:
-                    continue
-                elif label_ids[i][j] == len(token_map):
-                    y_true.append(temp_1)
-                    y_pred.append(temp_2)
-                    break
-                else:
+        logits_m = logits * input_m
+
+        # token-level-cause metrics
+        if args.evaluation_metrics == 'TLC':
+            for i, pred in enumerate(logits_m):
+                temp_1 = []
+                temp_2 = []
+
+                pred_b_cau_idx = np.where(pred==2)[0].reshape(1,-1)  # 2 -> B-CAU
+                pred_i_cau_idx = np.where(pred==3)[0].reshape(1,-1)  # 3 -> I-CAU
+                pred_cau_idx = np.concatenate((pred_b_cau_idx, pred_i_cau_idx), axis=1)[0]  # cause span indices in y_pred
+
+                true_b_cau_idx = np.where(label_ids[i]==2)[0].reshape(1,-1)
+                true_i_cau_idx = np.where(label_ids[i]==3)[0].reshape(1,-1)
+                true_cau_idx = np.concatenate((true_b_cau_idx, true_i_cau_idx), axis=1)[0]
+
+                cau_idx = np.union1d(pred_cau_idx, true_cau_idx)
+
+                for j in cau_idx:
+                    if j == 0:
+                        continue
+                    # try:
+                    if label_ids[i][j] == 0 or logits_m[i][j] == 0:
+                        continue
                     temp_1.append(token_map[label_ids[i][j]])
-                    temp_2.append(token_map[logits[i][j]])
+                    temp_2.append(token_map[logits_m[i][j]])
+
+                y_true.append(temp_1)
+                y_pred.append(temp_2)
+
+        elif args.evaluation_metrics == 'TLE':
+            for i, pred in enumerate(logits_m):
+                temp_1 = []
+                temp_2 = []
+
+                pred_b_emo_idx = np.where(pred==4)[0].reshape(1,-1)  # 4 -> B-EMO
+                pred_i_emo_idx = np.where(pred==5)[0].reshape(1,-1)  # 5 -> I-EMO
+                pred_emo_idx = np.concatenate((pred_b_emo_idx, pred_i_emo_idx), axis=1)[0]  # emotion span indices in y_pred
+
+                true_b_emo_idx = np.where(label_ids[i]==4)[0].reshape(1,-1)
+                true_i_emo_idx = np.where(label_ids[i]==5)[0].reshape(1,-1)
+                true_emo_idx = np.concatenate((true_b_emo_idx, true_i_emo_idx), axis=1)[0]
+
+                emo_idx = np.union1d(pred_emo_idx, true_emo_idx)
+
+                for j in emo_idx:
+                    if j == 0:
+                        continue
+                    # try:
+                    if label_ids[i][j] == 0 or logits_m[i][j] == 0:
+                        continue
+                    temp_1.append(token_map[label_ids[i][j]])
+                    temp_2.append(token_map[logits_m[i][j]])
+
+                y_true.append(temp_1)
+                y_pred.append(temp_2)
+
+        elif args.evaluation_metrics == 'TLEC':
+            for i, pred in enumerate(logits_m):
+                temp_1 = []
+                temp_2 = []
+
+                pred_b_emo_idx = np.where(pred==4)[0].reshape(1,-1)  # 4 -> B-EMO
+                pred_i_emo_idx = np.where(pred==5)[0].reshape(1,-1)  # 5 -> I-EMO
+                pred_emo_idx = np.concatenate((pred_b_emo_idx, pred_i_emo_idx), axis=1)  # emotion span indices in y_pred
+                pred_b_cau_idx = np.where(pred==2)[0].reshape(1,-1)
+                pred_i_cau_idx = np.where(pred==3)[0].reshape(1,-1)
+                pred_cau_idx = np.concatenate((pred_b_cau_idx, pred_i_cau_idx), axis=1)
+                pred_ec_idx = np.concatenate((pred_emo_idx, pred_cau_idx), axis=1)[0]
+
+                true_b_emo_idx = np.where(label_ids[i]==4)[0].reshape(1,-1)
+                true_i_emo_idx = np.where(label_ids[i]==5)[0].reshape(1,-1)
+                true_emo_idx = np.concatenate((true_b_emo_idx, true_i_emo_idx), axis=1)
+                true_b_cau_idx = np.where(label_ids[i]==2)[0].reshape(1,-1)
+                true_i_cau_idx = np.where(label_ids[i]==3)[0].reshape(1,-1)
+                true_cau_idx = np.concatenate((true_b_cau_idx, true_i_cau_idx), axis=1)
+                true_ec_idx = np.concatenate((true_emo_idx, true_cau_idx), axis=1)[0]
+
+                ec_idx = np.union1d(pred_ec_idx, true_ec_idx)
+
+                for j in ec_idx:
+                    if j == 0:
+                        continue
+                    # try:
+                    if label_ids[i][j] == 0 or logits_m[i][j] == 0:
+                        continue
+                    temp_1.append(token_map[label_ids[i][j]])
+                    temp_2.append(token_map[logits_m[i][j]])
+
+                y_true.append(temp_1)
+                y_pred.append(temp_2)
+
+        # for i, label in enumerate(label_ids):
+        #     temp_1 = []
+        #     temp_2 = []
+        #     for j,m in enumerate(label):
+        #         if j == 0:
+        #             continue
+        #         elif label_ids[i][j] == len(token_map):
+        #             y_true.append(temp_1)
+        #             y_pred.append(temp_2)
+        #             break
+        #         else:
+        #             temp_1.append(token_map[label_ids[i][j]])
+        #             temp_2.append(token_map[logits[i][j]])
 
     accuracy = accuracy_score(y_true, y_pred)
     precision = precision_score(y_true, y_pred)
