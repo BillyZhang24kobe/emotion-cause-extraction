@@ -1,3 +1,4 @@
+from lib2to3.pgen2 import token
 import os
 import torch
 from torch import nn
@@ -12,13 +13,13 @@ from tqdm import tqdm, trange
 
 import config
 from utils import *
-from predict import evaluate
+from predict import Evaluator
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-def train(args, train_dataset, model, tokenizer, label_map):
+def train(args, train_dataset, model, tokenizers, label_map):
     """
     Train the model
     """
@@ -85,12 +86,12 @@ def train(args, train_dataset, model, tokenizer, label_map):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-            inputs = {'input_ids':      batch[0],
-                      'attention_mask': batch[1],
-                      'token_type_ids': batch[2],
-                    #   'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM and RoBERTa don't use segment_ids
-                      'labels':         batch[3]}
-            outputs = model(args.device, input_ids, segment_ids, input_mask, label_ids, valid_ids, l_mask)
+            # inputs = {'input_ids':      batch[0],
+            #           'attention_mask': batch[1],
+            #           'token_type_ids': batch[2],
+            #         #   'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM and RoBERTa don't use segment_ids
+            #           'labels':         batch[3]}
+            outputs = model(args, args.device, input_ids, segment_ids, input_mask, label_ids, valid_ids, l_mask)
             loss = outputs
 
             # if args.n_gpu > 1:
@@ -114,7 +115,7 @@ def train(args, train_dataset, model, tokenizer, label_map):
                 global_step += 1
 
                 # tb_writer.add_scalar('eval_{}'.format('f1'), val_f1, global_step)
-                tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+                # tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                 tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
                 logging_loss = tr_loss
                 # if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
@@ -128,7 +129,9 @@ def train(args, train_dataset, model, tokenizer, label_map):
             train_iterator.close()
             break
 
-        val_acc, val_precision, val_recall, val_f1 = evaluate(args, model, tokenizer, 'dev', label_map)  # 
+        file_type = 'dev'
+        evaluator = Evaluator(args, model, tokenizers, file_type, label_map)
+        val_acc, val_precision, val_recall, val_f1 = evaluator.evaluate(args)  # 
         logger.info('> '+ args.evaluation_metrics + 'val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
 
         if val_f1 > max_val_f1:
@@ -138,7 +141,11 @@ def train(args, train_dataset, model, tokenizer, label_map):
             if not os.path.exists(path_dir):
                 os.makedirs(path_dir)
             model.save_pretrained(path_dir)
-            tokenizer.save_pretrained(path_dir)
+            bert_tokenizer = tokenizers[0]
+            bert_tokenizer.save_pretrained(path_dir)
+            if 'comet' in args.model_class:
+                comet_tokenizer = tokenizers[1]
+                comet_tokenizer.save_pretrained(path_dir)
             torch.save(args, os.path.join(path_dir, 'training_args.bin'))
             logger.info(">>Saving model checkpoint to %s", path_dir)
             # if not os.path.exists(output_dir):

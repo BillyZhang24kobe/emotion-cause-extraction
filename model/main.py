@@ -4,8 +4,8 @@ import argparse
 from utils import *
 from dataset import *
 from train import *
-from predict import *
-from model import *
+from predict import Evaluator
+from model import BertECTagging, CometBertECTagging
 
 def main():
     parser = argparse.ArgumentParser()
@@ -13,16 +13,16 @@ def main():
     ## Required parameters
     parser.add_argument("--data_dir", default=None, type=str, required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.") 
-    parser.add_argument("--evaluation_metrics", default=None, type=str, required=True, help="Whether to evaluate using token-level-cause metric.")
-    # parser.add_argument("--model_type", default=None, type=str, required=True,
-    #                     help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
-    
+    parser.add_argument("--evaluation_metrics", default='EESE+ECSE', type=str, required=True, help="Whether to evaluate using token-level-cause metric.")
+    parser.add_argument("--model_class", default='bert', type=str, required=True, help="Specify the target model.")
     
     ## Other parameters
     parser.add_argument("--output_dir", default=None, type=str,
                         help="The output directory where the model predictions and checkpoints will be written.")   
     parser.add_argument("--task_name", default="eca", type=str,
                         help="The name of the task to train")
+    parser.add_argument("--bert_model", default='bert-base-uncased', type=str, help="Path to pre-trained BERT model or name")
+    parser.add_argument("--comet_model", default=None, type=str, help="Path to pre-trained COMET model or name")
     parser.add_argument("--model_name_or_path", default=None, type=str,
                         help="Path to pre-trained model or name")
     parser.add_argument("--config_name", default="", type=str,
@@ -91,11 +91,16 @@ def main():
     args = parser.parse_args()
 
     args.output_dir = OUTPUT_DIR
-    args.model_name_or_path = BERT_MODEL
+    args.bert_model = BERT_MODEL
     args.max_seq_length = MAX_SEQ_LENGTH
     args.per_gpu_train_batch_size = config.BATCH_SIZE
     args.per_gpu_eval_batch_size = config.BATCH_SIZE
     args.learning_rate = config.LEARNING_RATE
+
+    if 'comet' in args.model_class:
+        args.comet_model = COMET_MODEL
+        comet_config, comet_model_class, comet_tokenizer_class = MODEL_CLASSES['comet-bert']
+        comet_tokenizer = comet_tokenizer_class.from_pretrained(args.comet_model)
 
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
@@ -105,7 +110,7 @@ def main():
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
         args.n_gpu = torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
@@ -124,42 +129,63 @@ def main():
     # Set seed
     set_seed(args)
 
-    processor = ECAProcessor()
+    processor = ECAProcessor()  # bert processor
     label_list = processor.get_labels()[0]  # [0] token_labels
     label_map = {i : label for i, label in enumerate(label_list,1)}  # token_labels
     num_labels = len(label_list) + 1
 
-    config_class, model_class, tokenizer_class = MODEL_CLASSES['bert']
+    bert_config_class, bert_model_class, bert_tokenizer_class = MODEL_CLASSES['bert']
     print(args.config_name)
     # config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name)
-    config_ = config_class.from_pretrained(args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name)
-    tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
-    model = model_class.from_pretrained(args.model_name_or_path, from_tf=bool('.ckpt' in args.model_name_or_path), config=config_)
+    # bert_config = bert_config_class.from_pretrained(args.bert_model, num_labels=num_labels, finetuning_task=args.task_name)
+    bert_tokenizer = bert_tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.bert_model, do_lower_case=args.do_lower_case)
+    # bert_model = bert_model_class.from_pretrained(args.bert_model, from_tf=bool('.ckpt' in args.model_name_or_path), config=bert_config)
 
-    model = BertECTagging.from_pretrained(args.model_name_or_path, num_labels=num_labels)
+    tokenizers = [bert_tokenizer]
+    if 'comet' in args.model_class:
+        tokenizers.append(comet_tokenizer)
+
+    if args.model_class == 'bert':
+        model = BertECTagging.from_pretrained(args.bert_model, num_labels=num_labels)
+    elif args.model_class == 'comet-bert':
+        # model = CometBertECTagging.from_pretrained(args.comet_model)
+        model = CometBertECTagging(args, comet_config, comet_model_class, comet_tokenizer_class)
 
     model.to(args.device)
     logger.info("Training/evaluation parameters %s", args)
 
     # Training
     if args.do_train:
-        train_dataset = load_and_cache_examples(args, tokenizer, 'train')
-        global_step, tr_loss, best_model_dir = train(args, train_dataset, model, tokenizer, label_map)
+        train_dataset = load_and_cache_examples(args, tokenizers, 'train')
+        global_step, tr_loss, best_model_dir = train(args, train_dataset, model, tokenizers, label_map)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
         if args.do_eval:
-            tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-            # model = model_class.from_pretrained(best_model_path)
-            model = BertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+            bert_tokenizer = bert_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+            if 'comet' in args.model_class:
+                comet_tokenizer = comet_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+                tokenizers = [bert_tokenizer, comet_tokenizer]
+                model = CometBertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+            else:
+                model = BertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+                tokenizers = [bert_tokenizer]
             model.to(args.device)
-            test_acc, test_precision, test_recall, test_f1 = evaluate(args, model, tokenizer, 'test', label_map)
+            evaluator = Evaluator(args, model, tokenizers, 'dev', label_map)
+            test_acc, test_precision, test_recall, test_f1 = evaluator.evaluate(args)
             logger.info('>> test_acc: {:.4f}, test_precision: {:.4f}, test_recall: {:.4f}, test test_f1: {:.4f}'.format(test_acc, test_precision, test_recall, test_f1))
 
     # Evaluation
     elif args.do_eval:
-        tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-        model = BertECTagging.from_pretrained(args.output_dir, num_labels=num_labels)
+        bert_tokenizer = bert_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        if 'comet' in args.model_class:
+            comet_tokenizer = comet_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+            tokenizers = [bert_tokenizer, comet_tokenizer]
+            model = CometBertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+        else:
+            model = BertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+            tokenizers = [bert_tokenizer]
         model.to(args.device)
-        test_acc, test_precision, test_recall, test_f1 = evaluate(args, model, tokenizer, 'dev', label_map)
+        evaluator = Evaluator(args, model, tokenizers, 'dev', label_map)
+        test_acc, test_precision, test_recall, test_f1 = evaluator.evaluate(args)
         logger.info('>> test_acc: {:.4f}, test_precision: {:.4f}, test_recall: {:.4f}, test test_f1: {:.4f}'.format(test_acc, test_precision, test_recall, test_f1))
 
             # checkpoints = [args.output_dir]

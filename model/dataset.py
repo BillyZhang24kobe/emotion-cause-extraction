@@ -10,6 +10,7 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 import logging
 
 logger = logging.getLogger(__name__)
+from IPython import embed
 
 
 class InputExample(object):
@@ -117,60 +118,81 @@ class ECAProcessor(DataProcessor):
         return examples
 
 
-def convert_examples_to_features(examples, label_tuple, max_seq_length, tokenizer):
+def convert_examples_to_features(args, examples, label_tuple, max_seq_length, tokenizers):
     """Loads a data file into a list of `InputBatch`s."""
     token_labels, emotion_labels = label_tuple
 
     token_label_map = {label : i for i, label in enumerate(token_labels, 1)}
     emotion_label_map = {label : i for i, label in enumerate(emotion_labels, 1)}
+
+    bert_tokenizer = tokenizers[0]
+    if 'comet' in args.model_class:
+        comet_tokenizer = tokenizers[1]
     
     features = []
     for (ex_index,example) in enumerate(examples):
         document = example.text_a.split(' ')
         token_label, emotion_label = example.label
-        tokens = []
+        bert_tokens = []
+        # comet_tokens = []
         labels = []
         valid = []  # TODO: what is this?
         label_mask = []
         for i, word in enumerate(document):
-            token = tokenizer.tokenize(word)
-            tokens.extend(token)
+            bert_token = bert_tokenizer.tokenize(word)
+            bert_tokens.extend(bert_token)
+            # if 'comet' in args.model_class:
+            #     comet_token = comet_tokenizer.tokenize(word)
+            #     comet_tokens.extend(comet_token)
             label_1 = token_label.split()[i]
-            for m in range(len(token)):
+            for m in range(len(bert_token)):
                 if m == 0:
                     labels.append(label_1)
                     valid.append(1)
                     label_mask.append(1)
                 else:
                     valid.append(0)
-        if len(tokens) >= max_seq_length - 1:
-            tokens = tokens[0:(max_seq_length - 2)]
+        if len(bert_tokens) >= max_seq_length - 1:
+            bert_tokens = bert_tokens[0:(max_seq_length - 2)]
             labels = labels[0:(max_seq_length - 2)]
             valid = valid[0:(max_seq_length - 2)]
             label_mask = label_mask[0:(max_seq_length - 2)]
-        ntokens = []
+        bert_ntokens = []
+        # comet_ntokens = []
         segment_ids = []
         label_ids = []
-        ntokens.append("[CLS]")
+
+        # preprocessing for bert
+        bert_ntokens.append("[CLS]")
         segment_ids.append(0)
         valid.insert(0,1)
         label_mask.insert(0,1)
         label_ids.append(token_label_map["[CLS]"])
-        for i, token in enumerate(tokens):
-            ntokens.append(token)
+        for i, token in enumerate(bert_tokens):
+            bert_ntokens.append(token)
             segment_ids.append(0)
             if len(labels) > i:
                 label_ids.append(token_label_map[labels[i]])
-        ntokens.append("[SEP]")  # append SEP to the end
+        bert_ntokens.append("[SEP]")  # append SEP to the end
         segment_ids.append(0)
         valid.append(1)
         label_mask.append(1)
         label_ids.append(token_label_map["[SEP]"])
-        input_ids = tokenizer.convert_tokens_to_ids(ntokens)
-        input_mask = [1] * len(input_ids)
+
+        # preprocessing for comet
+        # for i, token in enumerate(comet_tokens):
+        #     comet_ntokens.append(token)
+        # comet_ntokens.append("xEffect")
+        # comet_ntokens.append("[GEN]")
+        query = "{} {} [GEN]".format(example.text_a, 'xEffect')
+        tokenized_sequence = comet_tokenizer.tokenize(query)
+        comet_input_ids = comet_tokenizer.encode(tokenized_sequence, truncation=True, padding="max_length")
+
+        bert_input_ids = bert_tokenizer.convert_tokens_to_ids(bert_ntokens)
+        input_mask = [1] * len(bert_input_ids)
         label_mask = [1] * len(label_ids)
-        while len(input_ids) < max_seq_length:  # padding
-            input_ids.append(0)
+        while len(bert_input_ids) < max_seq_length:  # padding
+            bert_input_ids.append(0)
             input_mask.append(0)
             segment_ids.append(0)
             label_ids.append(0)
@@ -179,7 +201,7 @@ def convert_examples_to_features(examples, label_tuple, max_seq_length, tokenize
         while len(label_ids) < max_seq_length:
             label_ids.append(0)
             label_mask.append(0)
-        assert len(input_ids) == max_seq_length
+        assert len(bert_input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
         assert len(label_ids) == max_seq_length
@@ -190,15 +212,20 @@ def convert_examples_to_features(examples, label_tuple, max_seq_length, tokenize
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
             logger.info("tokens: %s" % " ".join(
-                    [str(x) for x in tokens]))
-            logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+                    [str(x) for x in bert_tokens]))
+            logger.info("input_ids: %s" % " ".join([str(x) for x in bert_input_ids]))
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
             logger.info(
                     "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             # logger.info("label: %s (id = %d)" % (example.label, label_ids))
 
+        # combine bert and comet input ids
+        all_input_ids = bert_input_ids + comet_input_ids  # 1 x (bert_max_seq_len + comet_max_len)
+
+        assert len(all_input_ids) == max_seq_length + 1024
+
         features.append(
-                InputFeatures(input_ids=input_ids,
+                InputFeatures(input_ids=all_input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_ids,
@@ -207,16 +234,15 @@ def convert_examples_to_features(examples, label_tuple, max_seq_length, tokenize
     return features
 
 
-def load_and_cache_examples(args, tokenizer, file_type='train'):
+def load_and_cache_examples(args, tokenizers, file_type='train'):
     # if args.local_rank not in [-1, 0] and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     processor = ECAProcessor()
-    # output_mode = output_modes[task]
     # Load data features from cache or dataset file
     cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
         file_type,
-        list(filter(None, args.model_name_or_path.split('/'))).pop(),
+        list(filter(None, args.model_class.split('/'))).pop(),
         str(args.max_seq_length)))
     if os.path.exists(cached_features_file):
         logger.info("Loading features from cached file %s", cached_features_file)
@@ -233,10 +259,8 @@ def load_and_cache_examples(args, tokenizer, file_type='train'):
             examples = processor.get_dev_examples(args.data_dir)
         else:
             examples = processor.get_test_examples(args.data_dir)
-        # examples = processor.get_dev_examples(args.data_dir) if evaluate else processor.get_train_examples(args.data_dir)
         
-        # Changed
-        features = convert_examples_to_features(examples, label_tuple, args.max_seq_length, tokenizer)
+        features = convert_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
 
         if args.local_rank in [-1, 0]:
             logger.info("Saving features into cached file %s", cached_features_file)
@@ -245,7 +269,7 @@ def load_and_cache_examples(args, tokenizer, file_type='train'):
     # if args.local_rank == 0 and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
-    # Convert to Tensors and build dataset
+    # Convert to Tensors and build dataset 
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)

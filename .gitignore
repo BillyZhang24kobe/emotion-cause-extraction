@@ -1,4 +1,5 @@
 .DS_Store
+*DS_Store*
 .idea/*
 __pycache__/*
 */__pycache__/*
@@ -12,3 +13,6 @@ __pycache__/*
 */*/logs/*
 *.ipynb
 *cached*
+*zip*
+*/comet-atomic_2020_BART/*
+*/*/comet-atomic_2020_BART/*
