@@ -24,7 +24,7 @@ BERT_MODEL = 'bert-base-uncased'
 COMET_MODEL = './comet-atomic_2020_BART'
 
 # hyperparameters
-BATCH_SIZE = 8
+BATCH_SIZE = 16
 NUM_EPOCHS = 5
 MAX_SEQ_LENGTH = 256
 LEARNING_RATE = 5e-5
