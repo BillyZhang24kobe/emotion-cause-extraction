@@ -5,7 +5,7 @@ from utils import *
 from dataset import *
 from train import *
 from predict import Evaluator
-from model import BertECTagging, CometBertECTagging
+from model import BertECTagging, CometBertECTagging, BertEmotion
 
 def main():
     parser = argparse.ArgumentParser()
@@ -34,10 +34,15 @@ def main():
     parser.add_argument("--max_seq_length", default=128, type=int,
                         help="The maximum total input sequence length after tokenization. Sequences longer "
                              "than this will be truncated, sequences shorter will be padded.")
+    parser.add_argument("--max_comet_seq_length", default=128, type=int,
+                        help="The maximum total input sequence length after tokenization for comet model. Sequences longer "
+                             "than this will be truncated, sequences shorter will be padded.")
     parser.add_argument("--do_train", action='store_true',
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
+    parser.add_argument("--print_report", action='store_true', help="Whether to print the classification report")
+    parser.add_argument("--print_prediction", action='store_true', help="Whether to print the prediction results")
     parser.add_argument("--evaluate_during_training", action='store_true',
                         help="Run evaluation during training at each logging step.")
     parser.add_argument("--do_lower_case", action='store_true',
@@ -93,8 +98,9 @@ def main():
     args.output_dir = OUTPUT_DIR
     args.bert_model = BERT_MODEL
     args.max_seq_length = MAX_SEQ_LENGTH
+    args.max_comet_seq_length = MAX_COMET_LENGTH
     args.per_gpu_train_batch_size = config.BATCH_SIZE
-    args.per_gpu_eval_batch_size = config.BATCH_SIZE
+    args.per_gpu_eval_batch_size = config.EVAL_BATCH_SIZE
     args.learning_rate = config.LEARNING_RATE
 
     if 'comet' in args.model_class:
@@ -109,30 +115,36 @@ def main():
         os.makedirs(args.output_dir)
 
     # Setup CUDA, GPU & distributed training
-    if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        args.n_gpu = torch.cuda.device_count()
-    else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        torch.distributed.init_process_group(backend='nccl')
-        args.n_gpu = 1
-    args.device = device
+    # if args.local_rank == -1 or args.no_cuda:
+    #     device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    #     args.n_gpu = torch.cuda.device_count()
+    # else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+    #     torch.cuda.set_device(args.local_rank)
+    #     device = torch.device("cuda", args.local_rank)
+    #     torch.distributed.init_process_group(backend='nccl')
+    #     args.n_gpu = 1
+    args.n_gpu = torch.cuda.device_count()
+    args.device = DEVICE
 
     # Setup logging
     logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
-                    args.local_rank, device, args.n_gpu, bool(args.local_rank != -1), args.fp16)
+                    args.local_rank, DEVICE, args.n_gpu, bool(args.local_rank != -1), args.fp16)
 
     # Set seed
     set_seed(args)
 
     processor = ECAProcessor()  # bert processor
-    label_list = processor.get_labels()[0]  # [0] token_labels
-    label_map = {i : label for i, label in enumerate(label_list,1)}  # token_labels
-    num_labels = len(label_list) + 1
+    if args.task_name == 'eca':
+        label_list = processor.get_labels()[0]  # [0] token_labels
+        label_map = {i : label for i, label in enumerate(label_list,1)}  # token_labels
+        num_labels = len(label_list) + 1
+    elif args.task_name == 'emotion_clf':
+        label_list = processor.get_labels()[1]  # [1] emotion_labels
+        label_map = {i : label for i, label in enumerate(label_list,1)}  # emotion_labels
+        num_labels = len(label_list)
 
     bert_config_class, bert_model_class, bert_tokenizer_class = MODEL_CLASSES['bert']
     print(args.config_name)
@@ -149,7 +161,9 @@ def main():
         model = BertECTagging.from_pretrained(args.bert_model, num_labels=num_labels)
     elif args.model_class == 'comet-bert':
         # model = CometBertECTagging.from_pretrained(args.comet_model)
-        model = CometBertECTagging(args, comet_config, comet_model_class, comet_tokenizer_class)
+        model = CometBertECTagging(args, comet_config, comet_model_class, comet_tokenizer_class, num_labels)
+    elif args.model_class == 'bert-emotion':
+        model = BertEmotion(args, num_labels)
 
     model.to(args.device)
     logger.info("Training/evaluation parameters %s", args)
@@ -159,49 +173,42 @@ def main():
         train_dataset = load_and_cache_examples(args, tokenizers, 'train')
         global_step, tr_loss, best_model_dir = train(args, train_dataset, model, tokenizers, label_map)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
-        if args.do_eval:
-            bert_tokenizer = bert_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-            if 'comet' in args.model_class:
-                comet_tokenizer = comet_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-                tokenizers = [bert_tokenizer, comet_tokenizer]
-                model = CometBertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
-            else:
-                model = BertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
-                tokenizers = [bert_tokenizer]
-            model.to(args.device)
-            evaluator = Evaluator(args, model, tokenizers, 'dev', label_map)
-            test_acc, test_precision, test_recall, test_f1 = evaluator.evaluate(args)
-            logger.info('>> test_acc: {:.4f}, test_precision: {:.4f}, test_recall: {:.4f}, test test_f1: {:.4f}'.format(test_acc, test_precision, test_recall, test_f1))
+        # if args.do_eval:
+        #     bert_tokenizer = bert_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        #     if 'comet' in args.model_class:
+        #         comet_tokenizer = comet_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        #         tokenizers = [bert_tokenizer, comet_tokenizer]
+        #         model = CometBertECTagging(args, comet_config, comet_model_class, comet_tokenizer_class, num_labels)# model = CometBertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+        #         model.load_state_dict(torch.load(os.path.join(best_model_dir, 'model_weights.pth')))
+        #     else:
+        #         model = BertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+        #         tokenizers = [bert_tokenizer]
+        #     model.to(args.device)
+        #     evaluator = Evaluator(args, model, tokenizers, 'dev', label_map)
+        #     test_acc, test_precision, test_recall, test_f1 = evaluator.evaluate(args)
+        #     logger.info('>> test_acc: {:.4f}, test_precision: {:.4f}, test_recall: {:.4f}, test_f1: {:.4f}'.format(test_acc, test_precision, test_recall, test_f1))
 
     # Evaluation
     elif args.do_eval:
+        # bert_tokenizer = bert_tokenizer_class.from_pretrained('bert-base-uncased')
         bert_tokenizer = bert_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
         if 'comet' in args.model_class:
             comet_tokenizer = comet_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
             tokenizers = [bert_tokenizer, comet_tokenizer]
-            model = CometBertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+            # print(tokenizers)
+            model = CometBertECTagging(args, comet_config, comet_model_class, comet_tokenizer_class, num_labels)
+            model.load_state_dict(torch.load(os.path.join(args.output_dir, 'model_weights.pth')))
+        elif 'emotion' in args.model_class:
+            tokenizers = [bert_tokenizer]
+            model = BertEmotion(args, num_labels)
+            model.load_state_dict(torch.load(os.path.join(args.output_dir, 'model_weights.pth')))
         else:
-            model = BertECTagging.from_pretrained(best_model_dir, num_labels=num_labels)
+            model = BertECTagging.from_pretrained(args.output_dir, num_labels=num_labels)
             tokenizers = [bert_tokenizer]
         model.to(args.device)
         evaluator = Evaluator(args, model, tokenizers, 'dev', label_map)
         test_acc, test_precision, test_recall, test_f1 = evaluator.evaluate(args)
-        logger.info('>> test_acc: {:.4f}, test_precision: {:.4f}, test_recall: {:.4f}, test test_f1: {:.4f}'.format(test_acc, test_precision, test_recall, test_f1))
-
-            # checkpoints = [args.output_dir]
-            # # if args.eval_all_checkpoints:
-            # #     checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
-            # #     logging.getLogger("pytorch_transformers.modeling_utils").setLevel(logging.WARN)  # Reduce logging
-            # logger.info("Evaluate the following checkpoints: %s", checkpoints)
-            # for checkpoint in checkpoints:
-            #     # global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
-            #     model = model_class.from_pretrained(checkpoint)
-            #     model = BertECTagging.from_pretrained(checkpoint, num_labels=num_labels)
-            #     model.to(args.device)
-            #     # label_map = {i : label for i, label in enumerate(label_list,1)}
-            #     result = evaluate(args, model, tokenizer, prefix=global_step, label_map=label_map)
-            #     #result = dict((k + '_{}'.format(global_step), v) for k, v in result.items())
-            #     # results.update(result)
+        logger.info('>> test_acc: {:.4f}, test_precision: {:.4f}, test_recall: {:.4f}, test_f1: {:.4f}'.format(test_acc, test_precision, test_recall, test_f1))
 
 
     # Saving best-practices: if you use defaults names for the model, you can reload it using from_pretrained()
