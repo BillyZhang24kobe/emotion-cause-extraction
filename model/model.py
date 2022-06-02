@@ -1,7 +1,7 @@
 from turtle import forward
 from config import DEVICE
 from pytorch_transformers import BertForTokenClassification, BertTokenizer, BertConfig, BertModel
-from transformers import BartConfig, PreTrainedModel, PretrainedConfig
+from transformers import BartConfig, PreTrainedModel, PretrainedConfig, BertForSequenceClassification
 
 import torch
 from torch import device, nn
@@ -98,6 +98,70 @@ class BAttention(nn.Module):
         return context, attn
 
 
+class SelfAttention(nn.Module):
+    """
+    Self-attention model
+    """
+    def __init__(self, emb_dim, num_heads=8, hidden_size=128):
+        super(SelfAttention, self).__init__()
+        self.emb_dim = emb_dim
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+
+        # self.embeddings = embeddings  # [batch_size, # of clauses, 768]
+        self.k = nn.Linear(self.emb_dim, self.hidden_size * self.num_heads, bias=False).to(DEVICE)  # key matrix
+        self.v = nn.Linear(self.emb_dim, self.hidden_size * self.num_heads, bias=False).to(DEVICE)  # value matrix
+        self.q = nn.Linear(self.emb_dim, self.hidden_size * self.num_heads, bias=False).to(DEVICE)  # query matrix
+
+        self.final = nn.Linear(self.hidden_size * self.num_heads, self.emb_dim).to(DEVICE)  # final linear layer
+
+    # x is a sequence of clauses in a batch
+    def forward(self, x):
+
+        b, t, _ = x.shape
+        e = self.hidden_size
+        h = self.num_heads
+        keys = self.k(x).view(b, t, h, e)
+        values = self.v(x).view(b, t, h, e)
+        queries = self.q(x).view(b, t, h, e)
+
+        keys = keys.transpose(2, 1)
+        values = values.transpose(2, 1)
+        queries = queries.transpose(2, 1)
+
+        dot = queries @ keys.transpose(3, 2)
+        dot = dot / np.sqrt(e)
+        dot = F.softmax(dot, dim=3)
+
+        out = dot @ values
+        out = out.transpose(1, 2).contiguous().view(b, t, h * e)
+        out = self.final(out)
+
+        return out
+
+        # d_k = self.hidden_size
+        # k = self.k(x)  # batch_size * seq_len * hidden_size
+        # v = self.v(x)  # batch_size * seq_len * hidden_size
+        # q = self.q(x)  # batch_size * seq_len * hidden_size
+
+        # output = torch.bmm(q, torch.transpose(k, 1, 2)) / np.sqrt(d_k)  # Q * K^T = batch_size * seq_len * seq_len
+        # output = F.softmax(output, dim=2)  # batch_size * seq_len * seq_len
+        # output = torch.bmm(output, v)  # batch_size * seq_len * hidden_size
+
+        # output = torch.relu(output)
+
+        # return output
+
+        # # pooling layer
+        # output = torch.max(output, dim=1)[0]  # shape: batch_size * hidden_size
+
+        # output = self.final(output)  # batch_size * num_classes
+
+        # output = torch.relu(output)
+
+        # return output
+
+
 def CometID_indexing(comet_input_ids, device):
     output = []
     for c_input in comet_input_ids:
@@ -167,7 +231,8 @@ def CometEmbedding_repeat_and_padding(args, comet_encoder_last_hidden_state, cla
     return torch.stack(output).to(args.device) 
     # comet_sequence_output = comet_sequence_output[:, -1, :].unsqueeze(1).repeat(1, args.max_comet_seq_length, 1)
 
-                
+
+
 class BertECTagging(BertForTokenClassification):
     def forward(self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None, valid_ids=None, attention_mask_label=None):
 
@@ -188,12 +253,11 @@ class BertECTagging(BertForTokenClassification):
         if labels is not None:
             # embed()
             # ['[PAD]', "O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
-            class_weights = [0, 0.006523830013414665, 0.312046004842615, 0.04602473103879291, 
-                             0.3381436536569367, 1.0, 0, 0]  # in training data
-            # class_weights = [0, 1.0, 1.0, 1.0, 1.0, 1.0, 0, 0]  # in training data
+            # class_weights = [0, 0.006523830013414665, 0.312046004842615, 0.04602473103879291, 
+            #                  0.3381436536569367, 1.0, 0, 0]  # in training data
+            class_weights = [0, 1.0, 1.0, 1.0, 1.0, 1.0, 0, 0]  # in training data
             loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
             # loss_fct = CrossEntropyLoss(ignore_index=0)
-            # Only keep active parts of the loss
             attention_mask_label = None
             if attention_mask_label is not None:
                 active_loss = attention_mask_label.view(-1) == 1
@@ -207,76 +271,69 @@ class BertECTagging(BertForTokenClassification):
             return logits
 
 
-class CometBertECTagging_v1(nn.Module):
-    def __init__(self, args, comet_config, comet_model_class, comet_tokenizer_class, num_labels):
-        super(CometBertECTagging_v1, self).__init__()
-        # self.device = args.device
+class BertClauseECTagging(nn.Module):
+    def __init__(self, args, num_labels):
+        super(BertClauseECTagging, self).__init__()
         self.bert_config = BertConfig.from_pretrained(args.bert_model)
         self.num_labels = num_labels
         self.bert_model = BertModel(self.bert_config)
-        # classifier_dropout = (self.bert_config.hidden_dropout_prob)
-        # self.dropout = nn.Dropout(classifier_dropout)
-        self.comet_config = comet_config.from_pretrained(args.comet_model, output_hidden_states=True)
-        self.comet_model = comet_model_class.from_pretrained(args.comet_model, config=self.comet_config)
-        self.comet_tokenizer = comet_tokenizer_class.from_pretrained(args.comet_model)
-        # self.comet_to_bert = nn.Linear(self.comet_config.d_model, self.bert_config.hidden_size)
+        classifier_dropout = (self.bert_config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(classifier_dropout)
 
-        # self.classifier = nn.Linear(self.bert_config.hidden_size+self.comet_config.d_model, self.num_labels)
-        self.classifier = nn.Linear(self.bert_config.hidden_size, self.num_labels)
+        self.lstm = nn.LSTM(self.bert_config.hidden_size, self.bert_config.hidden_size, num_layers=1, bidirectional=True, batch_first=True)
+
+        self.classifier = nn.Linear(self.bert_config.hidden_size * 3, self.num_labels)
+        # self.classifier = nn.Linear(self.bert_config.hidden_size, self.num_labels)
         # self.classifier = nn.Linear(self.bert_config.hidden_size * 2, self.num_labels)
     
     def forward(self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None,valid_ids=None, attention_mask_label=None):
-        doc_input_ids = input_ids[:, :args.max_seq_length]  # batch_size x max_seq_length
-        comet_input_ids = input_ids[:, args.max_seq_length:args.max_seq_length+args.max_comet_seq_length]  # batch_size x max_comet_length
-        clause_bert_ids = input_ids[:, args.max_seq_length+args.max_comet_seq_length:]  # batch_size x max_comet_length
+        clause_input_ids = input_ids[:, :args.max_seq_length]  # batch_size x max_seq_length
+        # comet_input_ids = input_ids[:, args.max_seq_length:]  # batch_size x max_comet_length
 
-        # indexing clause_bert_ids from bert_input_ids  
-        indexing_clause_from_doc = BertID_indexing(clause_bert_ids, doc_input_ids, device)  # batch_size x 2(start and end index)
-
-        # indexing the first token before padding in comet_input_ids (i.e. taking the last hidden state from the last meaningful comet token)
-        indexing_last_comet_token = CometID_indexing(comet_input_ids, device)  # batch_size x 1
-
-        # get BERT encodings - document embeddings
-        doc_sequence_output, _ = self.bert_model(doc_input_ids, 
+        # get BERT encodings - clause bert embeddings [batch_size, max_seq_len, 768]
+        clause_sequence_output, _ = self.bert_model(clause_input_ids, 
                                                   token_type_ids, 
                                                   attention_mask)
 
-        batch_size,max_len,feat_dim = doc_sequence_output.shape
+        # clause_sequence_output = clause_sequence_output.view(-1, 768).unsqueeze(0)
 
-        # clause bert embedding indexing
-        clause_sequence_output, clause_lengths = BertEmbedding_indexing(args, doc_sequence_output, indexing_clause_from_doc)  # batch_size x max_comet_seq_len x 768
+        # taking [CLS] as the pooler output for each clause
+        # pooled_output = clause_sequence_output[:,0,:].unsqueeze(0)  # [1, # of clause, 768]
 
-        # freeze comet model parameters
-        for par in self.comet_model.parameters():
-            par.requires_grad = False
-        comet_outputs = self.comet_model(comet_input_ids)
-        comet_encoder_last_hidden_state = comet_outputs.encoder_last_hidden_state    # batch_size x max_len x d_model(1024)
+        ###### attention-based pooling ######
+        attention = BAttention(self.bert_config.hidden_size)
+        pooled_output, _ = attention(clause_sequence_output, clause_sequence_output, clause_sequence_output)
+        pooled_output = pooled_output.squeeze(1).unsqueeze(0)
 
-        ##### Downsize comet embedding to bert size #####
-        # comet_encoder_last_hidden_state = self.comet_to_bert(comet_encoder_last_hidden_state)  # batch_size x max_len x 768
+        ###### bidirectional lstm to capture clause-level interactions via concatenation ######
+        lstm_output, _ = self.lstm(pooled_output)  # [1, # of clause, 768 x 2]
+        lstm_output = lstm_output.squeeze(0).unsqueeze(1).repeat(1, clause_sequence_output.size(1), 1)  # [# of clause, max_len, 768 x 2]
+        clause_sequence_output = torch.cat((clause_sequence_output, lstm_output), 2)  # [# of clauses, max_len, 768 x 2 + 768]
 
-        ##### concatenate BERT and COMET #####
-        # comet_sequence_output = CometEmbedding_repeat_and_padding(args, comet_encoder_last_hidden_state, clause_lengths)
-        # combined_output = torch.cat((clause_sequence_output, comet_sequence_output), dim=2)  # batch_size x max_len x (bert_dim+comet_dim)
-        # combined_output = nn.functional.normalize(combined_output, dim=2)
-        
-        ##### Attention-based COMET-BERT #####
-        # query: [decoder_dim] -> comet_dim -> 1024
-        # values: [seq_length, encoder_dim] -> seq_length x 768
-        # attention = MultiplicativeAttention(encoder_dim=self.bert_config.hidden_size, decoder_dim=self.comet_config.d_model)
-        # comet_sequence_output = CometEmbedding_indexing(args, comet_encoder_last_hidden_state, indexing_last_comet_token) # [batch_size, 1024] 
-        # combined_output = attention(comet_sequence_output, clause_sequence_output)  # [batch_size, max_comet_seq_length, bert_dim]
+        # Self-attention layer to capture clausal interactions
+        # self_attention = SelfAttention(self.bert_config.hidden_size)
+        # self_attn_output = self_attention(pooled_output)  # [batch_size, # of clauses, hidden_size]
+        # # clause_sequence_output = self_attn_output.view(-1, args.max_seq_length, self.bert_config.hidden_size)
+        # self_attn_output = self_attn_output.squeeze(0).unsqueeze(1).repeat(1, clause_sequence_output.size(1), 1)
+        # clause_sequence_output = torch.cat((clause_sequence_output, self_attn_output), 2)
+        # attention = AdditiveAttention(encoder_dim=self.bert_config.hidden_size, decoder_dim=self_attn_output.shape[-1])  # Attention calculation for each clause
+        # clause_sequence_output = attention(self_attn_output, clause_sequence_output)  # [batch_size, max_seq_length, bert_dim]
 
-        combined_output = clause_sequence_output
+        combined_output = self.dropout(clause_sequence_output)
+        # combined_output = self.dropout(combined_output)
+        # combined_output = clause_sequence_output
         logits = self.classifier(combined_output)
 
         if labels is not None:
-            # loss_fct = CrossEntropyLoss(ignore_index=0)
-            class_weights = [0, 6.20332001687303e-06, 0.0002981514609421586, 4.396377385034731e-05, 
-                             0.00032299741602067185, 0.0009541984732824427, 0, 0]  # in training data
-
+            # class_weights = [0, 6.20332001687303e-06, 0.0002981514609421586, 4.396377385034731e-05, 
+            #                  0.00032299741602067185, 0.0009541984732824427, 0, 0]  # in training data
+            # loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
             # class_weights = [0, 0.016, 0.33, 0.045, 0.333, 0.333, 0, 0]
+
+            class_weights = [0, 1, 1, 1, 1, 1, 0, 0]  # ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
             loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
+            
+            # loss_fct = CrossEntropyLoss(ignore_index=0)
             # Only keep active parts of the loss
             attention_mask_label = None
             if attention_mask_label is not None:
@@ -289,7 +346,6 @@ class CometBertECTagging_v1(nn.Module):
             return loss
         else:
             return logits
-
 
 class CometBertECTagging(nn.Module):
     def __init__(self, args, comet_config, comet_model_class, comet_tokenizer_class, num_labels):
@@ -307,7 +363,8 @@ class CometBertECTagging(nn.Module):
         self.lstm = nn.LSTM(self.bert_config.hidden_size, self.bert_config.hidden_size, num_layers=1, bidirectional=True, batch_first=True)
 
         # self.classifier = nn.Linear(self.bert_config.hidden_size+self.comet_config.d_model, self.num_labels)
-        self.classifier = nn.Linear(self.bert_config.hidden_size, self.num_labels)
+        self.classifier = nn.Linear(self.bert_config.hidden_size * 3, self.num_labels)
+        # self.classifier = nn.Linear(self.bert_config.hidden_size, self.num_labels)
         # self.classifier = nn.Linear(self.bert_config.hidden_size * 2, self.num_labels)
     
     def forward(self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None,valid_ids=None, attention_mask_label=None):
@@ -319,11 +376,30 @@ class CometBertECTagging(nn.Module):
                                                   token_type_ids, 
                                                   attention_mask)
 
-        _,max_len,_ = clause_sequence_output.shape
+        # clause_sequence_output = clause_sequence_output.view(-1, 768).unsqueeze(0)
 
-        # bidirectional lstm to capture long-range dependencies among clause embeddings [batch_size, seq_len, 768*2] 
-        # clause_sequence_output, a = self.lstm(clause_sequence_output)
-        
+        # taking [CLS] as the pooler output for each clause
+        # pooled_output = clause_sequence_output[:,0,:].unsqueeze(0)  # [1, # of clause, 768]
+
+        ###### attention-based pooling ######
+        attention = BAttention(self.bert_config.hidden_size)
+        pooled_output, _ = attention(clause_sequence_output, clause_sequence_output, clause_sequence_output)
+        pooled_output = pooled_output.squeeze(1).unsqueeze(0)
+
+        ###### bidirectional lstm to capture clause-level interactions via concatenation ######
+        lstm_output, _ = self.lstm(pooled_output)  # [1, # of clause, 768 x 2]
+        lstm_output = lstm_output.squeeze(0).unsqueeze(1).repeat(1, clause_sequence_output.size(1), 1)  # [# of clause, max_len, 768 x 2]
+        clause_sequence_output = torch.cat((clause_sequence_output, lstm_output), 2)  # [# of clauses, max_len, 768 x 2 + 768]
+
+        # Self-attention layer to capture clausal interactions
+        # self_attention = SelfAttention(self.bert_config.hidden_size)
+        # self_attn_output = self_attention(pooled_output)  # [batch_size, # of clauses, hidden_size]
+        # # clause_sequence_output = self_attn_output.view(-1, args.max_seq_length, self.bert_config.hidden_size)
+        # self_attn_output = self_attn_output.squeeze(0).unsqueeze(1).repeat(1, clause_sequence_output.size(1), 1)
+        # clause_sequence_output = torch.cat((clause_sequence_output, self_attn_output), 2)
+        # attention = AdditiveAttention(encoder_dim=self.bert_config.hidden_size, decoder_dim=self_attn_output.shape[-1])  # Attention calculation for each clause
+        # clause_sequence_output = attention(self_attn_output, clause_sequence_output)  # [batch_size, max_seq_length, bert_dim]
+
         # indexing the first token before padding in comet_input_ids (i.e. taking the last hidden state from the last meaningful comet token)
         # indexing_last_comet_token = CometID_indexing(comet_input_ids, device)  # [batch_size, 1]
 
@@ -356,12 +432,14 @@ class CometBertECTagging(nn.Module):
         logits = self.classifier(combined_output)
 
         if labels is not None:
-            # loss_fct = CrossEntropyLoss(ignore_index=0)
-            class_weights = [0, 6.20332001687303e-06, 0.0002981514609421586, 4.396377385034731e-05, 
-                             0.00032299741602067185, 0.0009541984732824427, 0, 0]  # in training data
-
+            # class_weights = [0, 6.20332001687303e-06, 0.0002981514609421586, 4.396377385034731e-05, 
+            #                  0.00032299741602067185, 0.0009541984732824427, 0, 0]  # in training data
+            # loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
             # class_weights = [0, 0.016, 0.33, 0.045, 0.333, 0.333, 0, 0]
+
+            class_weights = [0, 1, 1, 1, 1, 1, 0, 0]  # ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
             loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
+            
             # loss_fct = CrossEntropyLoss(ignore_index=0)
             # Only keep active parts of the loss
             attention_mask_label = None
@@ -377,35 +455,29 @@ class CometBertECTagging(nn.Module):
             return logits
 
 
-class BertEmotion(nn.Module):
-    def __init__(self, args, num_labels):
-        super(BertEmotion, self).__init__()
-        self.bert_config = BertConfig.from_pretrained(args.bert_model)
-        self.num_labels = num_labels
-        self.bert_model = BertModel(self.bert_config)
-        classifier_dropout = (self.bert_config.hidden_dropout_prob)
-        self.dropout = nn.Dropout(classifier_dropout)
+# self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None, valid_ids=None, attention_mask_label=None
+class BertEmotion(BertForSequenceClassification):
+    def forward(self, args, device, input_ids, segment_ids, input_mask, labels=None, valid_ids=None, l_mask=None):
 
-        self.classifier = nn.Linear(self.bert_config.hidden_size, self.num_labels)
-    
-    def forward(self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None, valid_ids=None, attention_mask_label=None):
-
-        # get BERT encodings - clause bert embeddings [batch_size, max_seq_len, 768]
-        clause_sequence_output, _ = self.bert_model(input_ids, token_type_ids, attention_mask)
+        # get BERT encodings - doc bert embeddings [batch_size, max_seq_len, 768]
+        bert_output = self.bert(input_ids, segment_ids, input_mask)
 
         ###### [CLS] pooling ######
-        pooled_output = clause_sequence_output[:, 0, :]  # [CLS] embeddings: [batch_size, 768]
+        # pooled_output = bert_output.pooler_output  # [CLS] embeddings: [batch_size, 768]
 
         ###### mean pooling ######
-        # pooled_output = torch.mean(clause_sequence_output, dim=1)  # [batch_size, 768]
+        # bert_output = bert_output.last_hidden_state
+        # pooled_output = torch.mean(bert_output, dim=1)  # [batch_size, 768]
 
         ###### max pooling ######
-        # pooled_output = torch.max(clause_sequence_output, dim=1)[0]  # [batch_size, 768]
+        # bert_output = bert_output.last_hidden_state
+        # pooled_output = torch.max(bert_output, dim=1)[0]  # [batch_size, 768]
 
         ###### attention-based pooling ######
-        # attention = BAttention(self.bert_config.hidden_size)
-        # pooled_output, _ = attention(clause_sequence_output, clause_sequence_output, clause_sequence_output)
-        # pooled_output = pooled_output.squeeze(1)
+        bert_output = bert_output.last_hidden_state
+        attention = BAttention(self.config.hidden_size)
+        pooled_output, _ = attention(bert_output, bert_output, bert_output)
+        pooled_output = pooled_output.squeeze(1)
 
         pooled_output = self.dropout(pooled_output)  # [batch_size, max_seq_len, 768]
         logits = self.classifier(pooled_output)
@@ -413,12 +485,94 @@ class BertEmotion(nn.Module):
         if labels is not None:
             # class_weights = [0.0014, 0.0023, 0.0046, 0.0015, 0.0036, 0.0014]  # in training data
             # loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
+            
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(logits, labels.view(-1))
-            print(labels, loss)
             return loss
         else:
             return logits
+
+
+# class BertEmotion(nn.Module):
+#     def __init__(self, args, num_labels):
+#         super(BertEmotion, self).__init__()
+#         self.bert_config = BertConfig.from_pretrained(args.bert_model)
+#         self.num_labels = num_labels
+#         self.bert_model = BertModel(self.bert_config)
+#         classifier_dropout = (self.bert_config.hidden_dropout_prob)
+#         self.dropout = nn.Dropout(classifier_dropout)
+
+#         self.classifier = nn.Linear(self.bert_config.hidden_size, self.num_labels)
+    
+#     def forward(self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None, valid_ids=None, attention_mask_label=None):
+
+#         # get BERT encodings - clause bert embeddings [batch_size, max_seq_len, 768]
+#         clause_sequence_output, _ = self.bert_model(input_ids, token_type_ids, attention_mask)
+
+#         ###### [CLS] pooling ######
+#         pooled_output = clause_sequence_output[:, 0, :]  # [CLS] embeddings: [batch_size, 768]
+
+#         ###### mean pooling ######
+#         # pooled_output = torch.mean(clause_sequence_output, dim=1)  # [batch_size, 768]
+
+#         ###### max pooling ######
+#         # pooled_output = torch.max(clause_sequence_output, dim=1)[0]  # [batch_size, 768]
+
+#         ###### attention-based pooling ######
+#         # attention = BAttention(self.bert_config.hidden_size)
+#         # pooled_output, _ = attention(clause_sequence_output, clause_sequence_output, clause_sequence_output)
+#         # pooled_output = pooled_output.squeeze(1)
+
+#         pooled_output = self.dropout(pooled_output)  # [batch_size, max_seq_len, 768]
+#         logits = self.classifier(pooled_output)
+
+#         if labels is not None:
+#             # class_weights = [0.0014, 0.0023, 0.0046, 0.0015, 0.0036, 0.0014]  # in training data
+#             # loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
+#             loss_fct = CrossEntropyLoss()
+#             loss = loss_fct(logits, labels.view(-1))
+#             print(labels, loss)
+#             return loss
+#         else:
+#             return logits
+
+
+# def forward(self, args, device, input_ids, token_type_ids=None, attention_mask=None, labels=None, valid_ids=None, attention_mask_label=None):
+
+#         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask)
+
+#         batch_size,max_len,feat_dim = sequence_output.shape
+#         valid_output = torch.zeros(batch_size,max_len,feat_dim,dtype=torch.float32, device=device)  # TODO: maybe do not need valid_output?
+#         for i in range(batch_size):
+#             jj = -1
+#             for j in range(max_len):
+#                     if valid_ids[i][j].item() == 1:
+#                         jj += 1
+#                         valid_output[i][jj] = sequence_output[i][j]
+        
+#         sequence_output = self.dropout(valid_output)
+#         logits = self.classifier(sequence_output)
+
+#         if labels is not None:
+#             # embed()
+#             # ['[PAD]', "O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
+#             class_weights = [0, 0.006523830013414665, 0.312046004842615, 0.04602473103879291, 
+#                              0.3381436536569367, 1.0, 0, 0]  # in training data
+#             # class_weights = [0, 1.0, 1.0, 1.0, 1.0, 1.0, 0, 0]  # in training data
+#             loss_fct = CrossEntropyLoss(weight=torch.FloatTensor(class_weights).to(device))
+#             # loss_fct = CrossEntropyLoss(ignore_index=0)
+#             # Only keep active parts of the loss
+#             attention_mask_label = None
+#             if attention_mask_label is not None:
+#                 active_loss = attention_mask_label.view(-1) == 1
+#                 active_logits = logits.view(-1, self.num_labels)[active_loss]
+#                 active_labels = labels.view(-1)[active_loss]
+#                 loss = loss_fct(active_logits, active_labels)
+#             else:
+#                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+#             return loss
+#         else:
+#             return logits
 
 
 # bert_input_ids = torch.tensor([[1,4,5,6,9,10,11,0,0,0,0],[2,5,6,8,1,8,0,0,0,0,0]])

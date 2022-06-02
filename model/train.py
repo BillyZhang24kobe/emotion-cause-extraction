@@ -87,7 +87,20 @@ def train(args, train_dataset, model, tokenizers, label_map):
         for step, batch in enumerate(epoch_iterator):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
-            input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
+            input_ids, input_mask, segment_ids, label_ids, valid_ids, l_mask = batch
+
+            if args.model_class in ['bert-clause', 'comet-bert']:
+                input_ids = input_ids.squeeze(0)
+                input_mask = input_mask.squeeze(0)
+                segment_ids = segment_ids.squeeze(0)
+                label_ids = label_ids.squeeze(0)
+                valid_ids = valid_ids.squeeze(0)
+                l_mask = l_mask.squeeze(0)
+
+            # if args.model_class == 'bert-emotion':
+            #     outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=label_ids)
+            #     loss = outputs[0]
+            # else:
             outputs = model(args, args.device, input_ids, segment_ids, input_mask, label_ids, valid_ids, l_mask)
             loss = outputs
 
@@ -108,6 +121,7 @@ def train(args, train_dataset, model, tokenizers, label_map):
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
+                # optimizer.zero_grad()
                 model.zero_grad()
                 global_step += 1
 
@@ -129,7 +143,7 @@ def train(args, train_dataset, model, tokenizers, label_map):
         file_type = 'dev'
         evaluator = Evaluator(args, model, tokenizers, file_type, label_map)
         val_acc, val_precision, val_recall, val_f1 = evaluator.evaluate(args)  # 
-        logger.info('> '+ args.evaluation_metrics + '_val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
+        logger.info('> '+ args.evaluation_metrics + '_val_acc: {:.4f}, val_prec: {:.4f}, val_rec: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_precision, val_recall, val_f1))
 
         if val_f1 > max_val_f1:
             max_val_f1 = val_f1
