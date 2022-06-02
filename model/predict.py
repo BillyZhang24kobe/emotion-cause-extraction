@@ -2,7 +2,7 @@ from lib2to3.pgen2 import token
 from mimetypes import init
 from numpy import average
 import torch
-from torch import nn
+from torch import nn, typename
 import torch.nn.functional as F
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
@@ -19,9 +19,37 @@ from dataset import *
 from seqeval.metrics import classification_report, precision_score, recall_score, f1_score, accuracy_score
 from seqeval.metrics.sequence_labeling import get_entities
 from seqeval.metrics.v1 import _precision_recall_fscore_support
+
+# from IPython import embed
+
 import logging
 
 logger = logging.getLogger(__name__)
+
+def combined_pred_true(logits, label_ids, input_m):
+    """
+    Combine the clause logits to form document logits
+    """
+    # output: batch_size x max_seq_len
+    logits_concat = np.array([[]])
+    labels_concat = np.array([[]])
+    for lgt, lbs in zip(logits, label_ids):
+        pred = lgt[np.nonzero(lbs)]
+        true = lbs[np.nonzero(lbs)]
+
+        pred = pred[1:-1]
+        true = true[1:-1]
+        
+        logits_concat = np.append(logits_concat, [pred], axis=1)
+        labels_concat = np.append(labels_concat, [true], axis=1)
+
+
+    while logits_concat.shape[1] < input_m.shape[1]:
+        logits_concat = np.append(logits_concat, [[0]], axis=1)
+        labels_concat = np.append(labels_concat, [[0]], axis=1)
+
+    return logits_concat, labels_concat
+
 
 # evaluator class
 class Evaluator(object):
@@ -39,16 +67,28 @@ class Evaluator(object):
             batch = tuple(t.to(args.device) for t in batch)
 
             with torch.no_grad():
-                input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-                outputs = self.model(args.device, input_ids, segment_ids, input_mask,valid_ids=valid_ids,attention_mask_label=l_mask)
+                input_ids, input_mask, segment_ids, label_ids, valid_ids, l_mask = batch
+                if 'comet' in args.model_class:
+                    input_ids = input_ids.squeeze(0)
+                    input_mask = input_mask.squeeze(0)
+                    segment_ids = segment_ids.squeeze(0)
+                    label_ids = label_ids.squeeze(0)
+                    valid_ids = valid_ids.squeeze(0)
+                    l_mask = l_mask.squeeze(0)
+
+                outputs = self.model(args, args.device, input_ids, segment_ids, input_mask, valid_ids=valid_ids,attention_mask_label=l_mask)
                 logits = outputs #[:2]
+                # print(logits.shape)
 
             logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             input_m = input_mask.to('cpu').numpy()
+            if 'comet' in args.model_class:
+                logits_m, label_ids = combined_pred_true(logits, label_ids, input_m)
+            else:
+                logits_m = logits * input_m  # batch_size x max_seq_len
 
-            logits_m = logits * input_m
 
             if args.evaluation_metrics == 'ECSE':
                 for i, pred in enumerate(logits_m):
@@ -74,6 +114,7 @@ class Evaluator(object):
                         temp_1.append(token_map[label_ids[i][j]])
                         temp_2.append(token_map[logits_m[i][j]])
 
+                    # embed()
                     y_true.append(temp_1)
                     y_pred.append(temp_2)
 
@@ -144,9 +185,18 @@ class Evaluator(object):
         recall = recall_score(y_true, y_pred)
         f1 = f1_score(y_true, y_pred)
 
-        if self.file_type == 'test':
+        if args.print_report:
             report = classification_report(y_true, y_pred,digits=4)
             logger.info("\n%s", report)
+
+        if args.print_prediction:
+            with open('pred_output.txt', 'w') as file:
+                for pred in y_pred:
+                    file.write(' '.join(pred) + '\n')
+
+            with open('true_output.txt', 'w') as file:
+                for true in y_true:
+                    file.write(' '.join(true) + '\n')
             
         return accuracy, precision, recall, f1
 
@@ -154,31 +204,43 @@ class Evaluator(object):
         def extract_tp_actual_correct(y_true, y_pred, suffix, scheme):
             entities_true = set()  # a set of tuple of tuples
             entities_pred = set()
-            emo_start_true, emo_start_pred = None, None
-            emo_end_true, emo_end_pred = None, None
-            cau_start_true, cau_start_pred = None, None
-            cau_end_true, cau_end_pred = None, None
-            for type_name, start, end in get_entities(y_true, suffix):
-                if type_name == 'EMO':
-                    emo_start_true = start
-                    emo_end_true = end
-                elif type_name == 'CAU':
-                    cau_start_true = start
-                    cau_end_true = end
-                if emo_start_true and emo_end_true and cau_start_true and cau_end_true:
-                    # emotion-cause span-pair
-                    entities_true.add(((emo_start_true, emo_end_true),(cau_start_true, cau_end_true)))
-                    emo_start_true, emo_end_true, cau_start_true, cau_end_true = None, None, None, None
-            for type_name, start, end in get_entities(y_pred, suffix):
-                if type_name == 'EMO':
-                    emo_start_pred = start
-                    emo_end_pred = end
-                elif type_name == 'CAU':
-                    cau_start_pred = start
-                    cau_end_pred = end
-                if emo_start_pred and emo_end_pred and cau_start_pred and cau_end_pred:
-                    entities_pred.add(((emo_start_pred, emo_end_pred),(cau_start_pred, cau_end_pred)))  # ???
-                    emo_start_pred, emo_end_pred, cau_start_pred, cau_end_pred =  None, None, None, None
+
+            for _y_true in y_true:
+                ent_true = get_entities(_y_true, suffix)
+                for e_type, start, end in ent_true:
+                    if e_type == 'EMO':
+                        emo_start_true = start
+                        emo_end_true = end
+                    elif e_type == 'CAU':
+                        cau_start_true = start
+                        cau_end_true = end
+                entities_true.add(((emo_start_true, emo_end_true),(cau_start_true, cau_end_true)))
+
+            for _y_pred in y_pred:
+                ent_pred = get_entities(_y_pred, suffix)
+                for e_type, start, end in ent_pred:
+                    if e_type == 'EMO':
+                        emo_start_pred = start
+                        emo_end_pred = end
+                    elif e_type == 'CAU':
+                        cau_start_pred = start
+                        cau_end_pred = end
+                try:
+                    entities_pred.add(((emo_start_pred, emo_end_pred),(cau_start_pred, cau_end_pred)))
+                except:
+                    continue  # TODO: might have some problem
+                
+            # entities_start_end_true = get_entities(y_true, suffix)
+            # for i in range(0, len(entities_start_end_true), 2):
+            #     emo_start_true = entities_start_end_true[i][1]  # start
+            #     emo_end_true = entities_start_end_true[i][2]  # end
+            #     try:
+            #         cau_start_true = entities_start_end_true[i+1][1]
+            #         cau_end_true = entities_start_end_true[i+1][2]
+            #     except:
+            #         embed()
+
+            #     entities_true.add(((emo_start_true, emo_end_true),(cau_start_true, cau_end_true)))
 
             tp_sum = np.array([len(entities_true & entities_pred)])
             pred_sum = np.array([len(entities_pred)])
@@ -194,15 +256,25 @@ class Evaluator(object):
 
             with torch.no_grad():
                 input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-                outputs = self.model(args.device, input_ids, segment_ids, input_mask,valid_ids=valid_ids,attention_mask_label=l_mask)
+                if 'comet' in args.model_class:
+                    input_ids = input_ids.squeeze(0)
+                    input_mask = input_mask.squeeze(0)
+                    segment_ids = segment_ids.squeeze(0)
+                    label_ids = label_ids.squeeze(0)
+                    valid_ids = valid_ids.squeeze(0)
+                    l_mask = l_mask.squeeze(0)
+
+                outputs = self.model(args, args.device, input_ids, segment_ids, input_mask, valid_ids=valid_ids,attention_mask_label=l_mask)
                 logits = outputs #[:2]
 
             logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             input_m = input_mask.to('cpu').numpy()
-
-            logits_m = logits * input_m
+            if 'comet' in args.model_class:
+                logits_m, label_ids = combined_pred_true(logits, label_ids, input_m)
+            else:
+                logits_m = logits * input_m  # batch_size x max_seq_len
 
             for i, pred in enumerate(logits_m):
                 temp_1 = []
@@ -248,6 +320,19 @@ class Evaluator(object):
             extract_tp_actual_correct=extract_tp_actual_correct
         )
 
+        if args.print_report:
+            report = classification_report(y_true, y_pred,digits=4)
+            logger.info("\n%s", report)
+
+        if args.print_prediction:
+            with open('./outputs/pred_output.txt', 'w') as file:
+                for pred in y_pred:
+                    file.write(' '.join(pred) + '\n')
+
+            with open('./outputs/true_output.txt', 'w') as file:
+                for true in y_true:
+                    file.write(' '.join(true) + '\n')
+
         return 0, precision, recall, f_score
 
     def token_level_metrics(self, args, eval_dataloader, token_map):
@@ -263,15 +348,24 @@ class Evaluator(object):
 
             with torch.no_grad():
                 input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-                outputs = self.model(args.device, input_ids, segment_ids, input_mask,valid_ids=valid_ids,attention_mask_label=l_mask)
+                if 'comet' in args.model_class:
+                    input_ids = input_ids.squeeze(0)
+                    input_mask = input_mask.squeeze(0)
+                    segment_ids = segment_ids.squeeze(0)
+                    label_ids = label_ids.squeeze(0)
+                    valid_ids = valid_ids.squeeze(0)
+                    l_mask = l_mask.squeeze(0)
+                outputs = self.model(args, args.device, input_ids, segment_ids, input_mask,valid_ids=valid_ids,attention_mask_label=l_mask)
                 logits = outputs #[:2]
 
             logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             input_m = input_mask.to('cpu').numpy()
-
-            logits_m = logits * input_m
+            if 'comet' in args.model_class:
+                logits_m, label_ids = combined_pred_true(logits, label_ids, input_m)
+            else:
+                logits_m = logits * input_m  # batch_size x max_seq_len
 
             if args.evaluation_metrics == 'TC':
                 for i, pred in enumerate(logits_m):
@@ -390,24 +484,57 @@ class Evaluator(object):
         recall = metrics.recall_score(y_true_recall, y_pred_recall, average='micro')
         f1 = (2 * precision * recall) / (precision + recall)
 
-        # if self.file_type == 'test':
-        #     report = classification_report(y_true, y_pred,digits=4)
-        #     logger.info("\n%s", report)
+        if args.print_report:
+            report = classification_report(y_true, y_pred,digits=4)
+            logger.info("\n%s", report)
             
         return accuracy, precision, recall, f1
     
+    def emotion_prediction(self, args, eval_dataloader, emotion_map):
+        n_correct, n_total = 0, 0
+        t_targets_all, t_outputs_all = None, None
+        for batch in tqdm(eval_dataloader, desc="Evaluating"):
+            self.model.eval()
+            batch = tuple(t.to(args.device) for t in batch)
+            input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
+
+            with torch.no_grad():
+                # self, args, device, input_ids, segment_ids, input_mask, labels=None, valid_ids=None, l_mask=None
+                outputs = self.model(args, args.device, input_ids, segment_ids, input_mask)
+                # outputs = self.model(input_ids, token_type_ids=None, attention_mask=input_mask)
+                # logits = outputs.logits
+
+                n_correct += (torch.argmax(outputs, -1) == label_ids.view(-1)).sum().item()
+                n_total += len(outputs)
+
+                if t_targets_all is None:
+                    t_targets_all = label_ids
+                    t_outputs_all = outputs
+                else:
+                    t_targets_all = torch.cat((t_targets_all, label_ids), dim=0)
+                    t_outputs_all = torch.cat((t_outputs_all, outputs), dim=0)
+
+        # print(n_correct, n_total)
+        accuracy = n_correct / n_total
+        precision = metrics.precision_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2, 3, 4, 5], average='macro')
+        recall = metrics.recall_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2, 3, 4, 5], average='macro')
+        f1 = (2 * precision * recall) / (precision + recall)
+
+        if args.print_report:
+            report = metrics.classification_report(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu())
+            logger.info("\n%s", report)
+
+        return accuracy, precision, recall, f1
+
+    
     def evaluate(self, args):
-        token_map = self.label_map  # token classification
-        # emotion_map = label_map[1]  # emotion classification
-
-        results = {}
-        # for eval_task, eval_output_dir in zip(eval_task_names, eval_outputs_dirs):
-        eval_dataset = load_and_cache_examples(args, self.tokenizers, file_type=self.file_type)
-
-        # if not os.path.exists(eval_output_dir) and args.local_rank in [-1, 0]:
-        #     os.makedirs(eval_output_dir)
-
         args.eval_batch_size = args.per_gpu_eval_batch_size
+
+        if 'comet' in args.model_class:
+            eval_dataset = CometDataset(args, self.file_type, self.tokenizers)
+        else:
+            eval_dataset = load_and_cache_examples(args, self.tokenizers, file_type=self.file_type)
+
         # Note that DistributedSampler samples randomly
         eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -417,9 +544,12 @@ class Evaluator(object):
         logger.info("  Num examples = %d", len(eval_dataset))
         logger.info("  Batch size = %d", args.eval_batch_size)
 
+        if args.evaluation_metrics == 'emotion_clf':
+            return self.emotion_prediction(args, eval_dataloader, self.label_map)
+
         if args.evaluation_metrics in ['ECSE', 'EESE', 'EESE+ECSE']:
-            return self.span_extraction_metrics(args, eval_dataloader, token_map)
+            return self.span_extraction_metrics(args, eval_dataloader, self.label_map)
         elif args.evaluation_metrics in ['TC', 'TE', 'TEC']:
-            return self.token_level_metrics(args, eval_dataloader, token_map)
+            return self.token_level_metrics(args, eval_dataloader, self.label_map)
         elif args.evaluation_metrics == 'ECSP':
-            return self.span_pair_extraction_metrics(args, eval_dataloader, token_map)
+            return self.span_pair_extraction_metrics(args, eval_dataloader, self.label_map)

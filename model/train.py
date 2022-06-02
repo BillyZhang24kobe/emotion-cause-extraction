@@ -19,6 +19,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from IPython import embed
+
 def train(args, train_dataset, model, tokenizers, label_map):
     """
     Train the model
@@ -76,7 +78,7 @@ def train(args, train_dataset, model, tokenizers, label_map):
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
-    max_val_f1 = 0
+    max_val_f1 = -1
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
@@ -85,12 +87,20 @@ def train(args, train_dataset, model, tokenizers, label_map):
         for step, batch in enumerate(epoch_iterator):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
-            input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-            # inputs = {'input_ids':      batch[0],
-            #           'attention_mask': batch[1],
-            #           'token_type_ids': batch[2],
-            #         #   'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM and RoBERTa don't use segment_ids
-            #           'labels':         batch[3]}
+            input_ids, input_mask, segment_ids, label_ids, valid_ids, l_mask = batch
+
+            if args.model_class in ['bert-clause', 'comet-bert']:
+                input_ids = input_ids.squeeze(0)
+                input_mask = input_mask.squeeze(0)
+                segment_ids = segment_ids.squeeze(0)
+                label_ids = label_ids.squeeze(0)
+                valid_ids = valid_ids.squeeze(0)
+                l_mask = l_mask.squeeze(0)
+
+            # if args.model_class == 'bert-emotion':
+            #     outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=label_ids)
+            #     loss = outputs[0]
+            # else:
             outputs = model(args, args.device, input_ids, segment_ids, input_mask, label_ids, valid_ids, l_mask)
             loss = outputs
 
@@ -105,17 +115,18 @@ def train(args, train_dataset, model, tokenizers, label_map):
                 torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
             else:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
             tr_loss += loss.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                scheduler.step()  # Update learning rate schedule
                 optimizer.step()
+                scheduler.step()  # Update learning rate schedule
+                # optimizer.zero_grad()
                 model.zero_grad()
                 global_step += 1
 
-                # tb_writer.add_scalar('eval_{}'.format('f1'), val_f1, global_step)
-                # tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+            # tb_writer.add_scalar('eval_{}'.format('f1'), val_f1, global_step)
+            # tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                 tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
                 logging_loss = tr_loss
                 # if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
@@ -128,19 +139,22 @@ def train(args, train_dataset, model, tokenizers, label_map):
         if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
             break
-
+        
         file_type = 'dev'
         evaluator = Evaluator(args, model, tokenizers, file_type, label_map)
         val_acc, val_precision, val_recall, val_f1 = evaluator.evaluate(args)  # 
-        logger.info('> '+ args.evaluation_metrics + 'val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
+        logger.info('> '+ args.evaluation_metrics + '_val_acc: {:.4f}, val_prec: {:.4f}, val_rec: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_precision, val_recall, val_f1))
 
         if val_f1 > max_val_f1:
             max_val_f1 = val_f1
             # Save model checkpoint
-            path_dir = os.path.join(args.output_dir, 'checkpoint_val_f1_{}'.format(round(val_f1, 4))+args.evaluation_metrics)
+            path_dir = os.path.join(args.output_dir, 'checkpoint_{}_val_f1_{}_{}'.format(args.model_class, round(val_f1, 4), args.evaluation_metrics))
             if not os.path.exists(path_dir):
                 os.makedirs(path_dir)
-            model.save_pretrained(path_dir)
+            if 'comet' in args.model_class or 'emotion' in args.model_class:
+                torch.save(model.state_dict(), os.path.join(path_dir, 'model_weights.pth'))
+            else:
+                model.save_pretrained(path_dir)
             bert_tokenizer = tokenizers[0]
             bert_tokenizer.save_pretrained(path_dir)
             if 'comet' in args.model_class:

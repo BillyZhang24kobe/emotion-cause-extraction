@@ -6,6 +6,7 @@ __pycache__/*
 */*/__pycache__/*
 *.pyc
 *kingcrab*
+*piranha*
 *checkpoints*
 */trained_model/*
 */*/trained_model/*
@@ -16,3 +17,4 @@ __pycache__/*
 *zip*
 */comet-atomic_2020_BART/*
 */*/comet-atomic_2020_BART/*
+*.txt
