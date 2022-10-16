@@ -148,7 +148,7 @@ def train(args, train_dataset, model, tokenizers, label_map):
         if val_f1 > max_val_f1:
             max_val_f1 = val_f1
             # Save model checkpoint
-            path_dir = os.path.join(args.output_dir, 'checkpoint_{}_val_f1_{}_{}'.format(args.model_class, round(val_f1, 4), args.evaluation_metrics))
+            path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.comet_file, round(val_f1, 4), args.evaluation_metrics))
             if not os.path.exists(path_dir):
                 os.makedirs(path_dir)
             if 'comet' in args.model_class or 'emotion' in args.model_class:

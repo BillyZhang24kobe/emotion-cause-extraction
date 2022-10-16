@@ -40,10 +40,10 @@ def readfile(filename):
 #         emotion_label = line[3]
 #         doc_id = line[4]
 
-#         # x_output = line[5]
-#         # data.append((clause, document, clause_label, emotion_label, doc_id, x_output))
+#         x_output = line[5]
+#         data.append((clause, document, clause_label, emotion_label, doc_id, x_output))
         
-#         data.append((clause, document, clause_label, emotion_label, doc_id))
+#         # data.append((clause, document, clause_label, emotion_label, doc_id))
     
 #     return data
 
@@ -292,20 +292,20 @@ class ECAProcessor(DataProcessor):
 
 class COMETProcessor(DataProcessor):
     """Processor for eca data set"""
-    def get_train_examples(self, data_dir):
+    def get_train_examples(self, data_dir, comet_file):
         """See base class."""
         return self._create_examples(
-            self._read_comet_tsv(os.path.join(data_dir, "comet-train-pair.tsv")), "train")
+            self._read_comet_tsv(os.path.join(data_dir, "comet-train-pair-{}.tsv".format(comet_file))), "train")
 
-    def get_dev_examples(self, data_dir):
+    def get_dev_examples(self, data_dir, comet_file):
         """See base class."""
         return self._create_examples(
-            self._read_comet_tsv(os.path.join(data_dir, "comet-dev-pair.tsv")), "dev")
+            self._read_comet_tsv(os.path.join(data_dir, "comet-dev-pair-{}.tsv".format(comet_file))), "dev")
     
-    def get_test_examples(self, data_dir):
+    def get_test_examples(self, data_dir, comet_file):
         """See base class."""
         return self._create_examples(
-            self._read_comet_tsv(os.path.join(data_dir, "comet-test-pair.tsv")), "test")
+            self._read_comet_tsv(os.path.join(data_dir, "comet-test-pair-{}.tsv".format(comet_file))), "test")
         
     def get_labels(self):
         token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
@@ -612,7 +612,7 @@ def convert_comet_examples_to_features(args, examples, label_tuple, max_seq_leng
     features = []
     for (ex_index, example) in enumerate(examples):
         clause = example.text_a[0].strip().split(' ')
-        xReact_response = example.text_a[3].strip().split(' ')
+        comet_relation_response = example.text_a[3].strip().split(' ')
         # document = re.sub('\s+',' ', example.text_a[1]).strip().split(' ')
         token_label, emotion_label = example.label
         bert_tokens = []
@@ -659,7 +659,7 @@ def convert_comet_examples_to_features(args, examples, label_tuple, max_seq_leng
         label_ids.append(token_label_map["[SEP]"])
 
         # encoding xReact_output as input to BERT
-        for i, word in enumerate(xReact_response):
+        for i, word in enumerate(comet_relation_response):
             bert_token = bert_tokenizer.tokenize(word.lower())
             for i, b_token in enumerate(bert_token):
                 bert_ntokens.append(b_token)
@@ -755,11 +755,11 @@ def load_and_cache_examples(args, tokenizers, file_type='train'):
         label_tuple = processor.get_labels()
 
         if file_type == 'train':
-            examples = processor.get_train_examples(args.data_dir)
+            examples = processor.get_train_examples(args.data_dir, args.comet_file)
         elif file_type == 'dev':
-            examples = processor.get_dev_examples(args.data_dir)
+            examples = processor.get_dev_examples(args.data_dir, args.comet_file)
         else:
-            examples = processor.get_test_examples(args.data_dir)
+            examples = processor.get_test_examples(args.data_dir, args.comet_file)
 
         if 'comet' in args.model_class:
             features = convert_comet_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
