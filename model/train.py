@@ -11,6 +11,8 @@ from pytorch_transformers import AdamW, WarmupLinearSchedule
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
+from copy import deepcopy
+
 import config
 from utils import *
 from predict import Evaluator
@@ -148,11 +150,17 @@ def train(args, train_dataset, model, tokenizers, label_map):
         if val_f1 > max_val_f1:
             max_val_f1 = val_f1
             # Save model checkpoint
-            path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.comet_file, round(val_f1, 4), args.evaluation_metrics))
+            if args.model_class == 'bert-gpt3':
+                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.gpt3_shot_type, round(val_f1, 4), args.evaluation_metrics))
+            elif 'comet' in args.model_class:
+                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.comet_file, round(val_f1, 4), args.evaluation_metrics))
+            else:
+                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_val_f1_{}_{}'.format(args.model_class, round(val_f1, 4), args.evaluation_metrics))
+            best_model_state = deepcopy(model.state_dict())
             if not os.path.exists(path_dir):
                 os.makedirs(path_dir)
             if 'comet' in args.model_class or 'emotion' in args.model_class:
-                torch.save(model.state_dict(), os.path.join(path_dir, 'model_weights.pth'))
+                torch.save(best_model_state, os.path.join(path_dir, 'model_weights.pth'))
             else:
                 model.save_pretrained(path_dir)
             bert_tokenizer = tokenizers[0]

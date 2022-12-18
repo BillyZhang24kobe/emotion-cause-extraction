@@ -533,6 +533,8 @@ class Evaluator(object):
         if 'comet' in args.model_class:
             eval_dataset = ClauseDataset(args, self.file_type, self.tokenizers)
             # eval_dataset = CometDataset(args, self.file_type, self.tokenizers)
+        elif args.model_class == 'bert-gpt3':
+            eval_dataset = load_and_cache_gpt3_examples(args, self.tokenizers, file_type=self.file_type)
         else:
             eval_dataset = load_and_cache_examples(args, self.tokenizers, file_type=self.file_type)
 
