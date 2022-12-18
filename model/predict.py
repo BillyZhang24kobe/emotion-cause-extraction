@@ -190,11 +190,11 @@ class Evaluator(object):
             logger.info("\n%s", report)
 
         if args.print_prediction:
-            with open('pred_output.txt', 'w') as file:
+            with open('./outputs/pred_output.txt', 'w') as file:
                 for pred in y_pred:
                     file.write(' '.join(pred) + '\n')
 
-            with open('true_output.txt', 'w') as file:
+            with open('./outputs/true_output.txt', 'w') as file:
                 for true in y_true:
                     file.write(' '.join(true) + '\n')
             
@@ -531,7 +531,10 @@ class Evaluator(object):
         args.eval_batch_size = args.per_gpu_eval_batch_size
 
         if 'comet' in args.model_class:
-            eval_dataset = CometDataset(args, self.file_type, self.tokenizers)
+            eval_dataset = ClauseDataset(args, self.file_type, self.tokenizers)
+            # eval_dataset = CometDataset(args, self.file_type, self.tokenizers)
+        elif args.model_class == 'bert-gpt3':
+            eval_dataset = load_and_cache_gpt3_examples(args, self.tokenizers, file_type=self.file_type)
         else:
             eval_dataset = load_and_cache_examples(args, self.tokenizers, file_type=self.file_type)
 

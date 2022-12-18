@@ -25,6 +25,8 @@ def main():
                         help="The name of the task to train")
     parser.add_argument("--comet_file", default="xReact", type=str,
                         help="The name of the comet relation.")
+    parser.add_argument("--gpt3_shot_type", default="TRS-2", type=str,
+                        help="The shot type of gpt3 generated explanations.")
     parser.add_argument("--bert_model", default='bert-base-uncased', type=str, help="Path to pre-trained BERT model or name")
     parser.add_argument("--comet_model", default=None, type=str, help="Path to pre-trained COMET model or name")
     parser.add_argument("--model_name_or_path", default=None, type=str,
@@ -108,6 +110,7 @@ def main():
     args.per_gpu_eval_batch_size = config.EVAL_BATCH_SIZE
     args.learning_rate = config.LEARNING_RATE
     args.comet_file = config.COMET_FILE
+    args.gpt3_shot_type = config.GPT3_SHOT_TYPE
 
     if 'comet' in args.model_class:
         args.comet_model = COMET_MODEL
@@ -160,7 +163,7 @@ def main():
     if 'comet' in args.model_class:
         tokenizers.append(comet_tokenizer)
 
-    if args.model_class == 'bert':
+    if args.model_class == 'bert' or args.model_class == 'bert-gpt3':
         model = BertECTagging.from_pretrained(args.bert_model, num_labels=num_labels)
     elif args.model_class == 'bert-clause':
         model = BertClauseECTagging(args, num_labels=num_labels)
@@ -181,6 +184,8 @@ def main():
     if args.do_train:
         if args.model_class == 'bert':
             train_dataset = load_and_cache_examples(args, tokenizers, 'train')
+        elif args.model_class == 'bert-gpt3':
+            train_dataset = load_and_cache_gpt3_examples(args, tokenizers, 'train')
         else:
             train_dataset = ClauseDataset(args, 'train', tokenizers)
 
@@ -189,21 +194,25 @@ def main():
 
     # Evaluation
     elif args.do_eval:
-        bert_tokenizer = bert_tokenizer_class.from_pretrained('bert-base-uncased')
+        bert_tokenizer = bert_tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.bert_model, do_lower_case=args.do_lower_case)
         # bert_tokenizer = bert_tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-        if args.model_class == 'bert':
+        if args.model_class == 'bert' or args.model_class == 'bert-gpt3':
             model = BertECTagging.from_pretrained(args.output_dir, num_labels=num_labels)
             tokenizers = [bert_tokenizer]
+            model.eval()
         elif args.model_class == 'bert-clause':
             model = BertClauseECTagging(args, num_labels=num_labels)
             model.load_state_dict(torch.load(os.path.join(args.output_dir, 'model_weights.pth')))
+            model.eval()
         elif args.model_class == 'comet-bert':
             model = CometBertECTagging(args, comet_config, comet_model_class, comet_tokenizer_class, num_labels)
             model.load_state_dict(torch.load(os.path.join(args.output_dir, 'model_weights.pth')))
+            model.eval()
         elif 'emotion' in args.model_class:
             tokenizers = [bert_tokenizer]
             model = BertEmotion(args, num_labels)
             model.load_state_dict(torch.load(os.path.join(args.output_dir, 'model_weights.pth')))
+            model.eval()
             
         model.to(args.device)
         evaluator = Evaluator(args, model, tokenizers, 'dev', label_map)

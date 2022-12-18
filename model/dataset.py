@@ -1,5 +1,6 @@
 import os
 import csv
+from pydoc import classname
 import re
 
 import torch
@@ -27,45 +28,19 @@ def readfile(filename):
     
     return data
 
-
-# def read_comet_file(filename):
-#     tsv_file = open(filename)
-#     read_tsv = csv.reader(tsv_file, delimiter="\t")
-#     data = []
-#     for i, line in enumerate(read_tsv):
-#         if i == 0: continue
-#         clause = line[0]
-#         document = line[1]
-#         clause_label = line[2]
-#         emotion_label = line[3]
-#         doc_id = line[4]
-
-#         # x_output = line[5]
-#         # data.append((clause, document, clause_label, emotion_label, doc_id, x_output))
+def read_gpt3_file(filename):
+        tsv_file = open(filename)
+        read_tsv = csv.reader(tsv_file, delimiter="\t")
+        data = []
+        for i, line in enumerate(read_tsv):
+            if i == 0: continue
+            document = line[0]
+            doc_label = line[1]
+            emotion_label = line[2]
+            explanation = line[3]
+            data.append((document, doc_label, emotion_label, explanation))
         
-#         data.append((clause, document, clause_label, emotion_label, doc_id))
-    
-#     return data
-
-
-# def create_examples(lines, set_type):
-#         examples = []
-#         # for i,(clause, document, clause_label, emotion_label, doc_id, x_response) in enumerate(lines):
-#         for i,(clause, document, clause_label, emotion_label, doc_id) in enumerate(lines):
-#             guid = "%s-%s" % (set_type, i)
-#             # text_a = (clause, document, doc_id, x_response)
-#             text_a = (clause, document, doc_id)
-#             text_b = None
-#             labels = (clause_label, emotion_label)
-#             examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=labels))
-#         return examples
-
-
-# def get_labels():
-#     token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
-#     # token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO"]
-#     emotion_labels = ['fear', 'surprise', 'disgust', 'sadness', 'anger', 'happiness']
-#     return token_labels, emotion_labels
+        return data
 
 
 class ClauseDataset(TensorDataset):
@@ -225,7 +200,6 @@ class InputFeatures(object):
         self.label_mask = label_mask
         # self.doc_id = doc_id
 
-
 class DataProcessor(object):
     """Base class for data converters for sequence classification data sets."""
 
@@ -254,6 +228,11 @@ class DataProcessor(object):
     def _read_comet_tsv(cls, input_file, quotechar=None):
         """Reads a tab separated value file."""
         return read_comet_file(input_file)
+    
+    @classmethod
+    def _read_gpt3_tsv(cls, input_file, quotechar=None):
+        """Reads a tab separated value file."""
+        return read_gpt3_file(input_file)
 
 
 class ECAProcessor(DataProcessor):
@@ -290,22 +269,56 @@ class ECAProcessor(DataProcessor):
         return examples
 
 
+class ECAGPT3Processor(DataProcessor):
+    """Processor for eca data set"""
+    def get_train_examples(self, data_dir, gpt3_shot_type):
+        """See base class."""
+        return self._create_examples(
+            self._read_gpt3_tsv(os.path.join(data_dir, "eca-train-cleaned-exp-{}.tsv".format(gpt3_shot_type))), "train")
+
+    def get_dev_examples(self, data_dir, gpt3_shot_type):
+        """See base class."""
+        return self._create_examples(
+            self._read_gpt3_tsv(os.path.join(data_dir, "eca-dev-cleaned-exp-{}.tsv").format(gpt3_shot_type)), "dev")
+    
+    def get_test_examples(self, data_dir, gpt3_shot_type):
+        """See base class."""
+        return self._create_examples(
+            self._read_gpt3_tsv(os.path.join(data_dir, "eca-test-cleaned-exp-{}.tsv").format(gpt3_shot_type)), "test")
+        
+    def get_labels(self):
+        token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
+        # token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO"]
+        emotion_labels = ['fear', 'surprise', 'disgust', 'sadness', 'anger', 'happiness']
+        return token_labels, emotion_labels
+    
+    def _create_examples(self,lines,set_type):
+        examples = []
+        for i,(document, doc_label, emotion_label, explanations) in enumerate(lines):
+            guid = "%s-%s" % (set_type, i)
+            text_a = (document, explanations) #(clause, document, doc_id)
+            text_b = None
+            labels = (doc_label, emotion_label)
+            examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=labels))
+        return examples
+
+
 class COMETProcessor(DataProcessor):
     """Processor for eca data set"""
-    def get_train_examples(self, data_dir):
+    def get_train_examples(self, data_dir, comet_file):
         """See base class."""
         return self._create_examples(
-            self._read_comet_tsv(os.path.join(data_dir, "comet-train-pair.tsv")), "train")
+            self._read_comet_tsv(os.path.join(data_dir, "comet-train-pair-{}.tsv".format(comet_file))), "train")
 
-    def get_dev_examples(self, data_dir):
+    def get_dev_examples(self, data_dir, comet_file):
         """See base class."""
         return self._create_examples(
-            self._read_comet_tsv(os.path.join(data_dir, "comet-dev-pair.tsv")), "dev")
+            self._read_comet_tsv(os.path.join(data_dir, "comet-dev-pair-{}.tsv".format(comet_file))), "dev")
     
-    def get_test_examples(self, data_dir):
+    def get_test_examples(self, data_dir, comet_file):
         """See base class."""
         return self._create_examples(
-            self._read_comet_tsv(os.path.join(data_dir, "comet-test-pair.tsv")), "test")
+            self._read_comet_tsv(os.path.join(data_dir, "comet-test-pair-{}.tsv".format(comet_file))), "test")
         
     def get_labels(self):
         token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
@@ -383,12 +396,6 @@ def convert_examples_to_features(args, examples, label_tuple, max_seq_length, to
         valid.append(1)
         label_mask.append(1)
         label_ids.append(token_label_map["[SEP]"])
-
-        # preprocessing for comet
-        # for i, token in enumerate(comet_tokens):
-        #     comet_ntokens.append(token)
-        # comet_ntokens.append("xEffect")
-        # comet_ntokens.append("[GEN]")
 
         bert_input_ids = bert_tokenizer.convert_tokens_to_ids(bert_ntokens)
         input_mask = [1] * len(bert_input_ids)
@@ -612,7 +619,7 @@ def convert_comet_examples_to_features(args, examples, label_tuple, max_seq_leng
     features = []
     for (ex_index, example) in enumerate(examples):
         clause = example.text_a[0].strip().split(' ')
-        xReact_response = example.text_a[3].strip().split(' ')
+        comet_relation_response = example.text_a[3].strip().split(' ')
         # document = re.sub('\s+',' ', example.text_a[1]).strip().split(' ')
         token_label, emotion_label = example.label
         bert_tokens = []
@@ -659,7 +666,7 @@ def convert_comet_examples_to_features(args, examples, label_tuple, max_seq_leng
         label_ids.append(token_label_map["[SEP]"])
 
         # encoding xReact_output as input to BERT
-        for i, word in enumerate(xReact_response):
+        for i, word in enumerate(comet_relation_response):
             bert_token = bert_tokenizer.tokenize(word.lower())
             for i, b_token in enumerate(bert_token):
                 bert_ntokens.append(b_token)
@@ -734,14 +741,144 @@ def convert_comet_examples_to_features(args, examples, label_tuple, max_seq_leng
     return features
 
 
+##### BERT-Doc + GPT-3 explanations joint input to Bert #####
+def convert_gpt3_examples_to_features(args, examples, label_tuple, max_seq_length, tokenizers):
+    """Loads a data file into a list of `InputBatch`s."""
+    token_labels, emotion_labels = label_tuple
+
+    token_label_map = {label : i for i, label in enumerate(token_labels, 1)}
+    emotion_label_map = {label : i for i, label in enumerate(emotion_labels, 1)}
+
+    bert_tokenizer = tokenizers[0]
+    
+    features = []
+    for (ex_index, example) in enumerate(examples):
+        document = example.text_a[0].strip().split(' ')
+        explanation = example.text_a[1].strip().split(' ')
+
+        token_label, emotion_label = example.label
+        bert_tokens = []
+        labels = []
+        valid = []
+        label_mask = []
+        for i, word in enumerate(document):
+            bert_token = bert_tokenizer.tokenize(word.lower())
+            bert_tokens.extend(bert_token)
+            label_1 = token_label.split()[i]
+            for m in range(len(bert_token)):
+                if m == 0:
+                    labels.append(label_1)
+                    valid.append(1)
+                    label_mask.append(1)
+                else:
+                    valid.append(0)
+
+        if len(bert_tokens) >= max_seq_length - 1:
+            bert_tokens = bert_tokens[0:(max_seq_length - 2)]
+            labels = labels[0:(max_seq_length - 2)]
+            valid = valid[0:(max_seq_length - 2)]
+            label_mask = label_mask[0:(max_seq_length - 2)]
+        
+        bert_ntokens = []
+        segment_ids = []
+        label_ids = []
+
+        # encoding document input
+        bert_ntokens.append("[CLS]")
+        segment_ids.append(0)
+        valid.insert(0,1)
+        label_mask.insert(0,1)
+        label_ids.append(token_label_map["[CLS]"])
+        for i, token in enumerate(bert_tokens):
+            bert_ntokens.append(token)
+            segment_ids.append(0)
+            if len(labels) > i:
+                label_ids.append(token_label_map[labels[i]])
+        bert_ntokens.append("[SEP]")  # append SEP to the end
+        segment_ids.append(0)
+        valid.append(1)
+        label_mask.append(1)
+        label_ids.append(token_label_map["[SEP]"])
+
+        # encoding explanations as input to BERT
+        for i, word in enumerate(explanation):
+            bert_token = bert_tokenizer.tokenize(word.lower())
+            for i, b_token in enumerate(bert_token):
+                bert_ntokens.append(b_token)
+                segment_ids.append(1)
+                valid.append(1)
+                label_mask.append(0)
+                label_ids.append(0)
+        
+        bert_ntokens.append("[SEP]")
+        segment_ids.append(1)
+        valid.append(1)
+        label_mask.append(0)
+        label_ids.append(0)
+
+        bert_input_ids = bert_tokenizer.convert_tokens_to_ids(bert_ntokens)
+        input_mask = [1] * len(bert_input_ids)
+        
+        while len(bert_input_ids) < max_seq_length:  # padding for bert
+            bert_input_ids.append(0)
+            input_mask.append(0)
+            segment_ids.append(0)
+            label_ids.append(0)
+            valid.append(1)
+            label_mask.append(0)
+
+        while len(label_ids) < max_seq_length:
+            label_ids.append(0)
+            label_mask.append(0)
+
+        if len(bert_input_ids) > max_seq_length:
+            bert_input_ids = bert_input_ids[:max_seq_length]
+            input_mask = input_mask[:max_seq_length]
+            segment_ids = segment_ids[:max_seq_length]
+            label_ids = label_ids[:max_seq_length]
+            valid = valid[:max_seq_length]
+            label_mask = label_mask[:max_seq_length]
+
+        assert len(bert_input_ids) == max_seq_length
+        assert len(input_mask) == max_seq_length
+        assert len(segment_ids) == max_seq_length
+        assert len(label_ids) == max_seq_length
+        assert len(valid) == max_seq_length
+        assert len(label_mask) == max_seq_length
+
+        if ex_index < 5:
+            logger.info("*** Example ***")
+            logger.info("guid: %s" % (example.guid))
+            logger.info("tokens: %s" % " ".join(
+                    [str(x) for x in bert_tokens]))
+            logger.info("tokens + explanations %s" % " ".join([str(x) for x in bert_ntokens]))
+            logger.info("input_ids: %s" % " ".join([str(x) for x in bert_input_ids]))
+            logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
+            logger.info(
+                    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+            # logger.info("label: %s (id = %d)" % (example.label, label_ids))
+
+        # combine bert and comet input ids
+        # embed()
+        all_input_ids = bert_input_ids # 1 x (bert_max_seq_len)
+
+        assert len(all_input_ids) == args.max_seq_length
+
+        features.append(
+                InputFeatures(input_ids=all_input_ids,
+                              input_mask=input_mask,
+                              segment_ids=segment_ids,
+                              label_id=label_ids,
+                              valid_ids=valid,
+                              label_mask=label_mask))
+    return features
+
+
 def load_and_cache_examples(args, tokenizers, file_type='train'):
     # if args.local_rank not in [-1, 0] and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
-    if 'comet' in args.model_class:
-        processor = COMETProcessor()
-    else:
-        processor = ECAProcessor()
+    processor = ECAProcessor()
     # Load data features from cache or dataset file
     cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
         file_type,
@@ -774,6 +911,44 @@ def load_and_cache_examples(args, tokenizers, file_type='train'):
 
     # if args.local_rank == 0 and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
+
+    # Convert to Tensors and build dataset
+    # embed()
+    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+    all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+    all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+    all_valid_ids = torch.tensor([f.valid_ids for f in features], dtype=torch.long)
+    all_lmask_ids = torch.tensor([f.label_mask for f in features], dtype=torch.long)
+
+    dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_valid_ids,all_lmask_ids)
+
+    return dataset
+
+def load_and_cache_gpt3_examples(args, tokenizers, file_type='train'):
+
+    processor = ECAGPT3Processor()
+    # Load data features from cache or dataset file
+    cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
+        file_type,
+        list(filter(None, args.model_class.split('/'))).pop(),
+        str(args.max_seq_length)))
+    if os.path.exists(cached_features_file):
+        logger.info("Loading features from cached file %s", cached_features_file)
+        features = torch.load(cached_features_file)
+    else:
+        logger.info("Creating features from dataset file at %s", args.data_dir)
+        label_tuple = processor.get_labels()
+
+        if file_type == 'train':
+            examples = processor.get_train_examples(args.data_dir, args.gpt3_shot_type)
+        elif file_type == 'dev':
+            examples = processor.get_dev_examples(args.data_dir, args.gpt3_shot_type)
+        else:
+            examples = processor.get_test_examples(args.data_dir, args.gpt3_shot_type)
+
+
+        features = convert_gpt3_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
 
     # Convert to Tensors and build dataset
     # embed()
