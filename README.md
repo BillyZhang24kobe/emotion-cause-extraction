@@ -27,7 +27,13 @@ The resulting generation results are saved in `data` directory, which will be us
 ## GLUCOSE-based Inference
 We adopted the T5 model fine-tuned on [GLUCOSE](https://arxiv.org/abs/2009.07758) dataset (denoted as `t5-glucose`) to generate commonsense inferences on unseen stories that match human's mental models. To directly run inferences, the original dataset needs to be processed in a way that `t5-glucose` model accepts. Please refer to `preprocess-glucose.ipynb` in `model/GLUCOSE/t5-glucose` directory.
 
-After preprocessing, run the following script in the same directory to obtain GLUCOSE-based generations for each clause in the dataset:
+After preprocessing, run the following demo script in the same directory to obtain GLUCOSE-based generations for an example document:
+```
+bash demo.sh
+```
+Note that the inference commands are built based on the implementations in [fairseq](https://github.com/facebookresearch/fairseq) repo. Make sure to clone the repo before proceeding.
+
+To generate GLUCOSE-based explanations for all clauses in the dataset, please run the following command. Make sure to change `INPUT_FILE` and `OUTPUT_FILE` to specify the input and output file path.
 ```
 bash predict.sh
 ```
