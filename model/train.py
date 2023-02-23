@@ -1,5 +1,6 @@
 from lib2to3.pgen2 import token
 import os
+from random import seed
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -16,9 +17,9 @@ from copy import deepcopy
 import config
 from utils import *
 from predict import Evaluator
+import shutil
 
 import logging
-
 logger = logging.getLogger(__name__)
 
 from IPython import embed
@@ -29,10 +30,10 @@ def train(args, train_dataset, model, tokenizers, label_map):
     """
     tb_writer = SummaryWriter()
     # args.save_steps = config.SAVE_STEPS
-    args.num_train_epochs = config.NUM_EPOCHS
-    args.output_dir = config.OUTPUT_DIR
-    # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-    args.train_batch_size = config.BATCH_SIZE
+    # args.num_train_epochs = config.NUM_EPOCHS
+    # args.output_dir = config.OUTPUT_DIR
+    args.train_batch_size = args.per_gpu_train_batch_size
+    # args.train_batch_size = config.BATCH_SIZE
     train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
@@ -80,7 +81,36 @@ def train(args, train_dataset, model, tokenizers, label_map):
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
-    max_val_f1 = -1
+    if args.repeat == 0:
+        max_val_f1 = -1
+        best_model_name = ''
+    else:
+        if os.path.exists(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 1)+'.txt'):
+            with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 1)+'.txt', 'r') as f:
+                best_model_name = f.readlines()[-1].strip()
+                if args.model_class == 'comet-bert':
+                    # print(best_model_name)
+                    # print(args.output_dir+'checkpoint_'+args.model_class+'_'+args.comet_file+'_val_f1_')
+                    max_val_f1 = float(best_model_name.split(args.output_dir+'checkpoint_'+args.model_class+'_'+args.comet_file+'_val_f1_')[-1].split('_')[0])
+                else:
+                    max_val_f1 = float(best_model_name.split(args.output_dir+'checkpoint_'+args.model_class+'_val_f1_')[-1].split('_')[0])
+        elif os.path.exists(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 2)+'.txt'):
+            with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 2)+'.txt', 'r') as f:
+                best_model_name = f.readlines()[-1].strip()
+                if args.model_class == 'comet-bert':
+                    print(best_model_name)
+                    print(args.output_dir+'checkpoint_'+args.model_class+'_'+args.comet_file+'_val_f1_')
+                    max_val_f1 = float(best_model_name.split(args.output_dir+'checkpoint_'+args.model_class+'_'+args.comet_file+'_val_f1_')[-1].split('_')[0])
+                else:
+                    max_val_f1 = float(best_model_name.split(args.output_dir+'checkpoint_'+args.model_class+'_val_f1_')[-1].split('_')[0])
+        else:
+            with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 3)+'.txt', 'r') as f:
+                best_model_name = f.readlines()[-1].strip()
+                if args.model_class == 'comet-bert':
+                    max_val_f1 = float(best_model_name.split(args.output_dir+'checkpoint_'+args.model_class+'_'+args.comet_file+'_val_f1_')[-1].split('_')[0])
+                else:
+                    max_val_f1 = float(best_model_name.split(args.output_dir+'checkpoint_'+args.model_class+'_val_f1_')[-1].split('_')[0])
+            
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
@@ -148,18 +178,24 @@ def train(args, train_dataset, model, tokenizers, label_map):
         logger.info('> '+ args.evaluation_metrics + '_val_acc: {:.4f}, val_prec: {:.4f}, val_rec: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_precision, val_recall, val_f1))
 
         if val_f1 > max_val_f1:
+            # delete previous best model
+            if best_model_name:
+                shutil.rmtree(best_model_name, ignore_errors=True)
+                logger.info(">>Deleting previous model checkpoint %s", best_model_name)
+
             max_val_f1 = val_f1
             # Save model checkpoint
             if args.model_class == 'bert-gpt3':
                 path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.gpt3_shot_type, round(val_f1, 4), args.evaluation_metrics))
             elif 'comet' in args.model_class:
-                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.comet_file, round(val_f1, 4), args.evaluation_metrics))
+                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}_{}'.format(args.model_class, args.comet_file, round(val_f1, 4), args.evaluation_metrics, args.seed))
             else:
-                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_val_f1_{}_{}'.format(args.model_class, round(val_f1, 4), args.evaluation_metrics))
+                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_val_f1_{}_{}_{}'.format(args.model_class, round(val_f1, 4), args.evaluation_metrics, args.seed))
+            best_model_name = path_dir
             best_model_state = deepcopy(model.state_dict())
             if not os.path.exists(path_dir):
                 os.makedirs(path_dir)
-            if 'comet' in args.model_class or 'emotion' in args.model_class:
+            if 'comet' in args.model_class or 'emotion' in args.model_class or 'bert-clause' in args.model_class:
                 torch.save(best_model_state, os.path.join(path_dir, 'model_weights.pth'))
             else:
                 model.save_pretrained(path_dir)
@@ -169,7 +205,13 @@ def train(args, train_dataset, model, tokenizers, label_map):
                 comet_tokenizer = tokenizers[1]
                 comet_tokenizer.save_pretrained(path_dir)
             torch.save(args, os.path.join(path_dir, 'training_args.bin'))
-            logger.info(">>Saving model checkpoint to %s", path_dir)
+            logger.info(">>Saving model checkpoint on seed {} to {}".format(args.seed, path_dir))
+            if not os.path.exists(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat)+'.txt'):
+                with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat)+'.txt', 'w') as f:
+                    f.write(path_dir+'\n')
+            else:
+                with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat)+'.txt', 'a') as f:
+                    f.write(path_dir+'\n')
             # if not os.path.exists(output_dir):
             #     os.makedirs(output_dir)
             # model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
@@ -190,4 +232,4 @@ def train(args, train_dataset, model, tokenizers, label_map):
     if args.local_rank in [-1, 0]:
         tb_writer.close()
     
-    return global_step, tr_loss / global_step, path_dir
+    return global_step, tr_loss / global_step, best_model_name

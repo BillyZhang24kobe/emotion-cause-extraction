@@ -1,5 +1,5 @@
 from turtle import forward
-from config import DEVICE
+# from config import DEVICE
 from pytorch_transformers import BertForTokenClassification, BertTokenizer, BertConfig, BertModel
 from transformers import BartConfig, PreTrainedModel, PretrainedConfig, BertForSequenceClassification
 

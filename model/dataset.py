@@ -60,6 +60,7 @@ class ClauseDataset(TensorDataset):
         elif self.args.task_name == 'eca-comet':
             if self.eval_file_type == 'train':
                 self.data = ClauseDataset.read_comet_file(os.path.join(args.data_dir, "comet-train-pair-{}.tsv".format(args.comet_file)))
+                print("loading data from comet-train-pair-{}.tsv".format(args.comet_file))
             elif self.eval_file_type == 'dev':
                 self.data = ClauseDataset.read_comet_file(os.path.join(args.data_dir, "comet-dev-pair-{}.tsv".format(args.comet_file)))
             else:
@@ -931,7 +932,7 @@ def load_and_cache_gpt3_examples(args, tokenizers, file_type='train'):
     # Load data features from cache or dataset file
     cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
         file_type,
-        list(filter(None, args.model_class.split('/'))).pop(),
+        args.gpt3_shot_type,
         str(args.max_seq_length)))
     if os.path.exists(cached_features_file):
         logger.info("Loading features from cached file %s", cached_features_file)

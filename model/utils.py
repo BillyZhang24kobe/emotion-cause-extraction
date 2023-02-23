@@ -4,7 +4,6 @@ import numpy as np
 import config
 
 def set_seed(args):
-    args.seed = config.SEED
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

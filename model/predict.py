@@ -68,7 +68,7 @@ class Evaluator(object):
 
             with torch.no_grad():
                 input_ids, input_mask, segment_ids, label_ids, valid_ids, l_mask = batch
-                if 'comet' in args.model_class:
+                if 'comet' in args.model_class or 'bert-clause' in args.model_class:
                     input_ids = input_ids.squeeze(0)
                     input_mask = input_mask.squeeze(0)
                     segment_ids = segment_ids.squeeze(0)
@@ -84,7 +84,7 @@ class Evaluator(object):
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             input_m = input_mask.to('cpu').numpy()
-            if 'comet' in args.model_class:
+            if 'comet' in args.model_class or 'bert-clause' in args.model_class:
                 logits_m, label_ids = combined_pred_true(logits, label_ids, input_m)
             else:
                 logits_m = logits * input_m  # batch_size x max_seq_len
@@ -256,7 +256,7 @@ class Evaluator(object):
 
             with torch.no_grad():
                 input_ids, input_mask, segment_ids, label_ids, valid_ids,l_mask = batch
-                if 'comet' in args.model_class:
+                if 'comet' in args.model_class or 'bert-clause' in args.model_class:
                     input_ids = input_ids.squeeze(0)
                     input_mask = input_mask.squeeze(0)
                     segment_ids = segment_ids.squeeze(0)
@@ -271,7 +271,7 @@ class Evaluator(object):
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             input_m = input_mask.to('cpu').numpy()
-            if 'comet' in args.model_class:
+            if 'comet' in args.model_class or 'bert-clause' in args.model_class:
                 logits_m, label_ids = combined_pred_true(logits, label_ids, input_m)
             else:
                 logits_m = logits * input_m  # batch_size x max_seq_len
@@ -530,7 +530,7 @@ class Evaluator(object):
     def evaluate(self, args):
         args.eval_batch_size = args.per_gpu_eval_batch_size
 
-        if 'comet' in args.model_class:
+        if 'comet' in args.model_class or 'bert-clause' in args.model_class:
             eval_dataset = ClauseDataset(args, self.file_type, self.tokenizers)
             # eval_dataset = CometDataset(args, self.file_type, self.tokenizers)
         elif args.model_class == 'bert-gpt3':

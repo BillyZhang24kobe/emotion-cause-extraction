@@ -8,6 +8,16 @@ from train import *
 from predict import Evaluator
 from model import BertECTagging, CometBertECTagging, BertEmotion, BertClauseECTagging
 
+from pytorch_transformers import BertConfig, BertForTokenClassification
+from transformers import BertTokenizer, BertForSequenceClassification
+import torch
+from transformers import BartForConditionalGeneration, BartConfig, BartTokenizer
+
+MODEL_CLASSES = {
+    'bert': (BertConfig, BertForSequenceClassification, BertTokenizer),
+    'comet-bert': (BartConfig, BartForConditionalGeneration, BartTokenizer)
+}
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -20,7 +30,10 @@ def main():
     ## Other parameters
     parser.add_argument("--output_dir", default=None, type=str,
                         help="The output directory where the model predictions and checkpoints will be written.")
-    parser.add_argument("--continue_dir", default=None, type=str, help="The model directory where training will continue.")   
+    parser.add_argument("--continue_dir", default=None, type=str, help="The model directory where training will continue.")
+    parser.add_argument("--log_dir", default=None, type=str, help="The log directory to store model checkpoints' scores for each run.")
+    parser.add_argument("--repeat", default=0, type=int, help="The index of model run.")
+    parser.add_argument("--device", default=0, type=int, help="The gpu device.")      
     parser.add_argument("--task_name", default="eca", type=str,
                         help="The name of the task to train")
     parser.add_argument("--comet_file", default="xReact", type=str,
@@ -101,16 +114,30 @@ def main():
     parser.add_argument('--server_port', type=str, default='', help="For distant debugging.")
     args = parser.parse_args()
 
-    args.output_dir = OUTPUT_DIR
-    args.continue_dir = CONTINUE_DIR
-    args.bert_model = BERT_MODEL
-    args.max_seq_length = MAX_SEQ_LENGTH
-    args.max_comet_seq_length = MAX_COMET_LENGTH
-    args.per_gpu_train_batch_size = config.BATCH_SIZE
-    args.per_gpu_eval_batch_size = config.EVAL_BATCH_SIZE
-    args.learning_rate = config.LEARNING_RATE
-    args.comet_file = config.COMET_FILE
-    args.gpt3_shot_type = config.GPT3_SHOT_TYPE
+    # args.output_dir = OUTPUT_DIR
+    # args.continue_dir = CONTINUE_DIR
+    # args.bert_model = BERT_MODEL
+    # args.max_seq_length = MAX_SEQ_LENGTH
+    # args.max_comet_seq_length = MAX_COMET_LENGTH
+    # args.per_gpu_train_batch_size = config.BATCH_SIZE
+    # args.per_gpu_eval_batch_size = config.EVAL_BATCH_SIZE
+    # args.learning_rate = config.LEARNING_RATE
+    # args.comet_file = config.COMET_FILE
+    # args.gpt3_shot_type = config.GPT3_SHOT_TYPE
+
+    if args.repeat != 0:
+        if os.path.exists(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 1)+'.txt'):
+            with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 1)+'.txt', 'r') as f:
+                args.continue_dir = f.readlines()[-1].strip()
+                logger.info(">>Loading the best model checkpoint from last run %s", args.continue_dir)
+        elif os.path.exists(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 2)+'.txt'):
+            with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 2)+'.txt', 'r') as f:
+                args.continue_dir = f.readlines()[-1].strip()
+                logger.info(">>Loading the best model checkpoint from last run %s", args.continue_dir)
+        else:
+            with open(args.log_dir+args.evaluation_metrics+'_'+str(args.seed)+'_'+str(args.repeat - 3)+'.txt', 'r') as f:
+                args.continue_dir = f.readlines()[-1].strip()
+                logger.info(">>Loading the best model checkpoint from last run %s", args.continue_dir)
 
     if 'comet' in args.model_class:
         args.comet_model = COMET_MODEL
@@ -133,7 +160,8 @@ def main():
     #     torch.distributed.init_process_group(backend='nccl')
     #     args.n_gpu = 1
     args.n_gpu = torch.cuda.device_count()
-    args.device = DEVICE
+    # args.device = DEVICE
+    DEVICE = torch.device("cuda:{}".format(args.device) if torch.cuda.is_available() else "cpu")
 
     # Setup logging
     logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
