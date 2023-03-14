@@ -20,7 +20,7 @@ from seqeval.metrics import classification_report, precision_score, recall_score
 from seqeval.metrics.sequence_labeling import get_entities
 from seqeval.metrics.v1 import _precision_recall_fscore_support
 
-# from IPython import embed
+from IPython import embed
 
 import logging
 
@@ -80,6 +80,7 @@ class Evaluator(object):
                 logits = outputs #[:2]
                 # print(logits.shape)
 
+            # embed()
             logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
@@ -106,10 +107,10 @@ class Evaluator(object):
                     cau_idx = np.union1d(pred_cau_idx, true_cau_idx)
 
                     for j in cau_idx:
-                        if j == 0:
+                        if j == 0:  # excluding "O"
                             continue
                         # try:
-                        if label_ids[i][j] == 0 or logits_m[i][j] == 0:
+                        if label_ids[i][j] == 0 or logits_m[i][j] == 0: # excluding "O"
                             continue
                         temp_1.append(token_map[label_ids[i][j]])
                         temp_2.append(token_map[logits_m[i][j]])
@@ -179,7 +180,7 @@ class Evaluator(object):
 
                     y_true.append(temp_1)
                     y_pred.append(temp_2)
-
+        # embed()
         accuracy = accuracy_score(y_true, y_pred)
         precision = precision_score(y_true, y_pred)
         recall = recall_score(y_true, y_pred)
@@ -286,7 +287,7 @@ class Evaluator(object):
                 pred_b_cau_idx = np.where(pred==2)[0].reshape(1,-1)
                 pred_i_cau_idx = np.where(pred==3)[0].reshape(1,-1)
                 pred_cau_idx = np.concatenate((pred_b_cau_idx, pred_i_cau_idx), axis=1)
-                pred_ec_idx = np.concatenate((pred_emo_idx, pred_cau_idx), axis=1)[0]
+                pred_ec_idx = np.concatenate((pred_emo_idx, pred_cau_idx), axis=1)[0]  # emotion-cause span pair
 
                 true_b_emo_idx = np.where(label_ids[i]==4)[0].reshape(1,-1)
                 true_i_emo_idx = np.where(label_ids[i]==5)[0].reshape(1,-1)
@@ -307,6 +308,7 @@ class Evaluator(object):
                     temp_1.append(token_map[label_ids[i][j]])
                     temp_2.append(token_map[logits_m[i][j]])
 
+                # embed()
                 y_true.append(temp_1)
                 y_pred.append(temp_2)
 
@@ -533,8 +535,8 @@ class Evaluator(object):
         if 'comet' in args.model_class or 'bert-clause' in args.model_class:
             eval_dataset = ClauseDataset(args, self.file_type, self.tokenizers)
             # eval_dataset = CometDataset(args, self.file_type, self.tokenizers)
-        elif args.model_class == 'bert-gpt3':
-            eval_dataset = load_and_cache_gpt3_examples(args, self.tokenizers, file_type=self.file_type)
+        elif args.model_class in ['bert-gpt3', 'bert-doc-com']:
+            eval_dataset = load_and_cache_doc_examples(args, self.tokenizers, file_type=self.file_type)
         else:
             eval_dataset = load_and_cache_examples(args, self.tokenizers, file_type=self.file_type)
 

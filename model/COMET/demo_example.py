@@ -116,8 +116,8 @@ if __name__ == "__main__":
     print("model loaded")
 
     queries = []
-    head = "That day Jobs walked into the lobby of the video game manufacturer Atari and told the personnel director"
-    rel = "xReason"
+    head = "That day Jobs walked into the lobby of the video game manufacturer Atari and told the personnel director who was startled by his unkempt hair and attire that he wouldn't leave until they gave him a job."
+    rel = "Causes"
     query = "{} {} [GEN]".format(head, rel)
     queries.append(query)
     print(queries)

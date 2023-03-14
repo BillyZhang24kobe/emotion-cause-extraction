@@ -191,7 +191,8 @@ def main():
     if 'comet' in args.model_class:
         tokenizers.append(comet_tokenizer)
 
-    if args.model_class == 'bert' or args.model_class == 'bert-gpt3':
+    if args.model_class in ['bert', 'bert-gpt3', 'bert-doc-com', 'bert-ghazi', 'bert-gne']:
+    # if args.model_class == 'bert' or args.model_class == 'bert-gpt3':
         model = BertECTagging.from_pretrained(args.bert_model, num_labels=num_labels)
     elif args.model_class == 'bert-clause':
         model = BertClauseECTagging(args, num_labels=num_labels)
@@ -210,10 +211,10 @@ def main():
 
     # Training
     if args.do_train:
-        if args.model_class == 'bert':
+        if args.model_class in ['bert', 'bert-ghazi', 'bert-gne']:
             train_dataset = load_and_cache_examples(args, tokenizers, 'train')
-        elif args.model_class == 'bert-gpt3':
-            train_dataset = load_and_cache_gpt3_examples(args, tokenizers, 'train')
+        elif args.model_class in ['bert-gpt3', 'bert-doc-com']:
+            train_dataset = load_and_cache_doc_examples(args, tokenizers, 'train')
         else:
             train_dataset = ClauseDataset(args, 'train', tokenizers)
 

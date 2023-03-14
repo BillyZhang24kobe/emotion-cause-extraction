@@ -29,18 +29,33 @@ def readfile(filename):
     return data
 
 def read_gpt3_file(filename):
-        tsv_file = open(filename)
-        read_tsv = csv.reader(tsv_file, delimiter="\t")
-        data = []
-        for i, line in enumerate(read_tsv):
-            if i == 0: continue
-            document = line[0]
-            doc_label = line[1]
-            emotion_label = line[2]
-            explanation = line[3]
-            data.append((document, doc_label, emotion_label, explanation))
-        
-        return data
+    tsv_file = open(filename)
+    read_tsv = csv.reader(tsv_file, delimiter="\t")
+    data = []
+    for i, line in enumerate(read_tsv):
+        if i == 0: continue
+        document = line[0]
+        doc_label = line[1]
+        emotion_label = line[2]
+        explanation = line[3]
+        data.append((document, doc_label, emotion_label, explanation))
+    
+    return data
+
+
+def read_docCom_file(filename):
+    tsv_file = open(filename)
+    read_tsv = csv.reader(tsv_file, delimiter="\t")
+    data = []
+    for i, line in enumerate(read_tsv):
+        if i == 0: continue
+        document = line[0]
+        doc_label = line[1]
+        emotion_label = line[2]
+        explanation = line[3]
+        data.append((document, doc_label, emotion_label, explanation))
+    
+    return data
 
 
 class ClauseDataset(TensorDataset):
@@ -235,6 +250,10 @@ class DataProcessor(object):
         """Reads a tab separated value file."""
         return read_gpt3_file(input_file)
 
+    @classmethod
+    def _read_docCom_tsv(cls, input_file, quotechar=None):
+        """Reads a tab separated value file."""
+        return read_docCom_file(input_file)
 
 class ECAProcessor(DataProcessor):
     """Processor for eca data set"""
@@ -270,6 +289,74 @@ class ECAProcessor(DataProcessor):
         return examples
 
 
+class ECAGhaziProcessor(DataProcessor):
+    """Processor for eca data set"""
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev")
+    
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "dev.tsv")), "test")
+        
+    def get_labels(self):
+        token_labels = ["O", "B-CAU", "I-CAU", '[CLS]', '[SEP]']
+        # token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO"]
+        emotion_labels = ['fear', 'surprise', 'disgust', 'sad', 'anger', 'happy']
+        return token_labels, emotion_labels
+    
+    def _create_examples(self,lines,set_type):
+        examples = []
+        for i,(document, doc_label, emotion_label) in enumerate(lines):
+            guid = "%s-%s" % (set_type, i)
+            text_a = document.strip()
+            text_b = None
+            labels = (doc_label, emotion_label)
+            examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=labels))
+        return examples
+
+
+class ECAGNEProcessor(DataProcessor):
+    """Processor for eca data set"""
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev")
+    
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "dev.tsv")), "test")
+        
+    def get_labels(self):
+        token_labels = ["O", "B-CAU", "I-CAU", '[CLS]', '[SEP]']
+        # token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO"]
+        emotion_labels = ['fear', 'surprise', 'disgust', 'sadness', 'anger', 'joy', 'negative_surprise', 'positive_surprise']
+        return token_labels, emotion_labels
+    
+    def _create_examples(self,lines,set_type):
+        examples = []
+        for i,(document, doc_label, emotion_label) in enumerate(lines):
+            guid = "%s-%s" % (set_type, i)
+            text_a = document.strip()
+            text_b = None
+            labels = (doc_label, emotion_label)
+            examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=labels))
+        return examples
+
+
 class ECAGPT3Processor(DataProcessor):
     """Processor for eca data set"""
     def get_train_examples(self, data_dir, gpt3_shot_type):
@@ -298,6 +385,40 @@ class ECAGPT3Processor(DataProcessor):
         for i,(document, doc_label, emotion_label, explanations) in enumerate(lines):
             guid = "%s-%s" % (set_type, i)
             text_a = (document, explanations) #(clause, document, doc_id)
+            text_b = None
+            labels = (doc_label, emotion_label)
+            examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=labels))
+        return examples
+
+
+class ECADocComProcessor(DataProcessor):
+    """Processor for eca data set"""
+    def get_train_examples(self, data_dir, com_type):
+        """See base class."""
+        return self._create_examples(
+            self._read_docCom_tsv(os.path.join(data_dir, "eca-train-cleaned-{}.tsv".format(com_type))), "train")
+
+    def get_dev_examples(self, data_dir, com_type):
+        """See base class."""
+        return self._create_examples(
+            self._read_docCom_tsv(os.path.join(data_dir, "eca-dev-cleaned-{}.tsv".format(com_type))), "dev")
+    
+    def get_test_examples(self, data_dir, com_type):
+        """See base class."""
+        return self._create_examples(
+            self._read_docCom_tsv(os.path.join(data_dir, "eca-test-cleaned-{}.tsv".format(com_type))), "test")
+        
+    def get_labels(self):
+        token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO", '[CLS]', '[SEP]']
+        # token_labels = ["O", "B-CAU", "I-CAU",  "B-EMO", "I-EMO"]
+        emotion_labels = ['fear', 'surprise', 'disgust', 'sadness', 'anger', 'happiness']
+        return token_labels, emotion_labels
+    
+    def _create_examples(self,lines,set_type):
+        examples = []
+        for i,(document, doc_label, emotion_label, explanations) in enumerate(lines):
+            guid = "%s-%s" % (set_type, i)
+            text_a = (document, explanations)
             text_b = None
             labels = (doc_label, emotion_label)
             examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=labels))
@@ -352,7 +473,7 @@ def convert_examples_to_features(args, examples, label_tuple, max_seq_length, to
     features = []
     for (ex_index,example) in enumerate(examples):
         # text_a = (clause, document, doc_id)
-        document = example.text_a.split(' ')
+        document = example.text_a.split()
         token_label, emotion_label = example.label
         bert_tokens = []
         # comet_tokens = []
@@ -362,6 +483,7 @@ def convert_examples_to_features(args, examples, label_tuple, max_seq_length, to
         for i, word in enumerate(document):
             bert_token = bert_tokenizer.tokenize(word.lower())
             bert_tokens.extend(bert_token)
+            # embed()
             label_1 = token_label.split()[i]
             for m in range(len(bert_token)):
                 if m == 0:
@@ -754,8 +876,8 @@ def convert_gpt3_examples_to_features(args, examples, label_tuple, max_seq_lengt
     
     features = []
     for (ex_index, example) in enumerate(examples):
-        document = example.text_a[0].strip().split(' ')
-        explanation = example.text_a[1].strip().split(' ')
+        document = example.text_a[0].strip().split()
+        explanation = example.text_a[1].strip().split()
 
         token_label, emotion_label = example.label
         bert_tokens = []
@@ -874,41 +996,45 @@ def convert_gpt3_examples_to_features(args, examples, label_tuple, max_seq_lengt
                               label_mask=label_mask))
     return features
 
-
 def load_and_cache_examples(args, tokenizers, file_type='train'):
     # if args.local_rank not in [-1, 0] and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
-    processor = ECAProcessor()
+    if args.model_class == 'bert':
+        processor = ECAProcessor()
+    elif args.model_class == 'bert-ghazi':
+        processor = ECAGhaziProcessor()
+    elif args.model_class == 'bert-gne':
+        processor = ECAGNEProcessor()
     # Load data features from cache or dataset file
-    cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
-        file_type,
-        list(filter(None, args.model_class.split('/'))).pop(),
-        str(args.max_seq_length)))
-    if os.path.exists(cached_features_file):
-        logger.info("Loading features from cached file %s", cached_features_file)
-        features = torch.load(cached_features_file)
+    # cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
+    #     file_type,
+    #     list(filter(None, args.model_class.split('/'))).pop(),
+    #     str(args.max_seq_length)))
+    # if os.path.exists(cached_features_file):
+    #     logger.info("Loading features from cached file %s", cached_features_file)
+    #     features = torch.load(cached_features_file)
+    # else:
+    logger.info("Creating features from dataset file at %s", args.data_dir)
+    label_tuple = processor.get_labels()
+
+    if file_type == 'train':
+        examples = processor.get_train_examples(args.data_dir)
+    elif file_type == 'dev':
+        examples = processor.get_dev_examples(args.data_dir)
     else:
-        logger.info("Creating features from dataset file at %s", args.data_dir)
-        label_tuple = processor.get_labels()
+        examples = processor.get_test_examples(args.data_dir)
 
-        if file_type == 'train':
-            examples = processor.get_train_examples(args.data_dir)
-        elif file_type == 'dev':
-            examples = processor.get_dev_examples(args.data_dir)
-        else:
-            examples = processor.get_test_examples(args.data_dir)
+    if 'comet' in args.model_class:
+        features = convert_comet_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
+    elif 'emotion' in args.model_class:
+        features = convert_examples_to_emotion_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
+    else:
+        features = convert_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
 
-        if 'comet' in args.model_class:
-            features = convert_comet_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
-        elif 'emotion' in args.model_class:
-            features = convert_examples_to_emotion_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
-        else:
-            features = convert_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
-
-        if args.local_rank in [-1, 0]:
-            logger.info("Saving features into cached file %s", cached_features_file)
-            torch.save(features, cached_features_file)
+    # if args.local_rank in [-1, 0]:
+    #     logger.info("Saving features into cached file %s", cached_features_file)
+    #     torch.save(features, cached_features_file)
 
     # if args.local_rank == 0 and not evaluate:
     #     torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
@@ -926,30 +1052,34 @@ def load_and_cache_examples(args, tokenizers, file_type='train'):
 
     return dataset
 
-def load_and_cache_gpt3_examples(args, tokenizers, file_type='train'):
-
-    processor = ECAGPT3Processor()
-    # Load data features from cache or dataset file
-    cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
-        file_type,
-        args.gpt3_shot_type,
-        str(args.max_seq_length)))
-    if os.path.exists(cached_features_file):
-        logger.info("Loading features from cached file %s", cached_features_file)
-        features = torch.load(cached_features_file)
+def load_and_cache_doc_examples(args, tokenizers, file_type='train'):
+    if args.model_class == 'bert-gpt3':
+        processor = ECAGPT3Processor()
+        com_type = args.gpt3_shot_type
     else:
-        logger.info("Creating features from dataset file at %s", args.data_dir)
-        label_tuple = processor.get_labels()
+        processor = ECADocComProcessor()
+        com_type = args.comet_file
+    # # Load data features from cache or dataset file
+    # cached_features_file = os.path.join(args.data_dir, 'cached_{}_{}_{}'.format(
+    #     file_type,
+    #     com_type,
+    #     str(args.max_seq_length)))
+    # if os.path.exists(cached_features_file):
+    #     logger.info("Loading features from cached file %s", cached_features_file)
+    #     features = torch.load(cached_features_file)
+    # else:
+    logger.info("Creating features from dataset file at %s", args.data_dir)
+    label_tuple = processor.get_labels()
 
-        if file_type == 'train':
-            examples = processor.get_train_examples(args.data_dir, args.gpt3_shot_type)
-        elif file_type == 'dev':
-            examples = processor.get_dev_examples(args.data_dir, args.gpt3_shot_type)
-        else:
-            examples = processor.get_test_examples(args.data_dir, args.gpt3_shot_type)
+    if file_type == 'train':
+        examples = processor.get_train_examples(args.data_dir, com_type)
+    elif file_type == 'dev':
+        examples = processor.get_dev_examples(args.data_dir, com_type)
+    else:
+        examples = processor.get_test_examples(args.data_dir, com_type)
 
 
-        features = convert_gpt3_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
+    features = convert_gpt3_examples_to_features(args, examples, label_tuple, args.max_seq_length, tokenizers)
 
     # Convert to Tensors and build dataset
     # embed()

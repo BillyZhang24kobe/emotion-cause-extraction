@@ -17,7 +17,7 @@ def chunks(lst, n):
 
 class Comet:
     def __init__(self, model_path):
-        self.device = "cuda:3" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda:1" if torch.cuda.is_available() else "cpu"
         self.config = BartConfig.from_pretrained(model_path, output_hidden_states=True)
         self.model = BartForConditionalGeneration.from_pretrained(model_path, config=self.config).to(self.device)
         self.tokenizer = BartTokenizer.from_pretrained(model_path)
@@ -68,38 +68,32 @@ if __name__ == "__main__":
     print("model loaded")
 
     # load data
-    data_partition = 'test'
-    file_name = '../../data/comet-{}-pair.tsv'.format(data_partition)
-    data_file = open(file_name)
-    data_tsv = csv.reader(data_file, delimiter="\t")
+    # folds = ['fold0', 'fold1', 'fold2', 'fold3', 'fold4']
+    # for fold in folds:
+    #     print(fold)
+    for data_partition in ['train', 'dev', 'test']:
+        file_name = '../../data/goodnewseveryone-v1.0/data/{}.tsv'.format(data_partition)
+        data_file = open(file_name)
+        data_tsv = csv.reader(data_file, delimiter="\t")
 
-    rel1 = 'xReact'
-    rel2 = 'xEffect'
-    writeToFile = './data/comet-{}-pair-{}-{}.tsv'.format(data_partition, rel1, rel2)
-    rel_col_name = '{}_{}'.format(rel1, rel2)
+        rel = 'xEffect'
+        writeToFile = './data/goodnewseveryone/eca-{}-cleaned-{}.tsv'.format(data_partition, rel)
+        rel_col_name = rel
 
-    with open(writeToFile, 'wt') as out_file:
-        tsv_writer = csv.writer(out_file, delimiter='\t')
-        tsv_writer.writerow(['clause', 'document', 'token_label', 'emotion-label', 'doc_id', rel_col_name])
-        rel_list = [rel1, rel2]
-        for i, line in enumerate(data_tsv):
-            if i == 0: continue
-            clause = line[0]
-            document = line[1]
-            token_label = line[2]
-            emotion_label = line[3]
-            doc_id = line[4]
+        with open(writeToFile, 'wt') as out_file:
+            tsv_writer = csv.writer(out_file, delimiter='\t')
+            tsv_writer.writerow(['document', 'token_label', 'emotion-label', rel_col_name])
+            for i, line in enumerate(data_tsv):
+                if i == 0: continue
+                document = line[0]
+                token_label = line[1]
+                emotion_label = line[2]
 
-            queries = []
-            head = clause.strip()
-            x_response = ''
-            for rel in rel_list:
-                # rel = "xReason"
+                queries = []
+                head = document.strip()
+                x_response = ''
                 query = "{} {} [GEN]".format(head, rel)
                 queries.append(query)
-                # print(queries)
                 results = comet.generate(queries, decode_method="beam", num_generate=5)
-                # print(results)
-                x_response += results[0][0].strip() + '. '
-                queries = []
-            tsv_writer.writerow([clause, document, token_label, emotion_label, doc_id, x_response])
+                x_response += results[0][0].strip()
+                tsv_writer.writerow([document, token_label, emotion_label, x_response])

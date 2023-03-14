@@ -185,8 +185,12 @@ def train(args, train_dataset, model, tokenizers, label_map):
 
             max_val_f1 = val_f1
             # Save model checkpoint
-            if args.model_class == 'bert-gpt3':
-                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, args.gpt3_shot_type, round(val_f1, 4), args.evaluation_metrics))
+            if args.model_class in ['bert-gpt3', 'bert-doc-com']:
+                if args.model_class == 'bert-gpt3':
+                    com_type = args.gpt3_shot_type
+                else:
+                    com_type = args.comet_file
+                path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}'.format(args.model_class, com_type, round(val_f1, 4), args.evaluation_metrics))
             elif 'comet' in args.model_class:
                 path_dir = os.path.join(args.output_dir, 'checkpoint_{}_{}_val_f1_{}_{}_{}'.format(args.model_class, args.comet_file, round(val_f1, 4), args.evaluation_metrics, args.seed))
             else:
